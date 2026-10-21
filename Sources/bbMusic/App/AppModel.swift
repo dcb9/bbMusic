@@ -67,6 +67,9 @@ final class AppModel: ObservableObject {
 
     let player: Player
     let scrobbler: Scrobbler
+    private(set) lazy var mcp: MCPServer = MCPServer(model: self)
+    /// Fixed loopback port so a client config does not change between launches.
+    static let mcpPort: UInt16 = 43119
     let platform: QQMusicPlatform
     private let sidecar: SidecarManager
     private var connectionTask: Task<Void, Never>?
@@ -108,18 +111,38 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Bearer token for the MCP endpoint, generated once per install.
+    var mcpToken: String {
+        let url = Self.supportDirectory().appendingPathComponent("mcp-token")
+        if let existing = try? String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           existing.count >= 32 {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+        try? token.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return token
+    }
+
     func start() {
         // Credentials come from the Keychain only. The application identity is never compiled in:
         // the shared secret is enough to sign requests as this application, so it must not be
         // readable from the source tree or from `strings` on the binary.
         scrobbler.bootstrap()
         sidecar.start()
+        // Started with the app: an LLM client connects whenever it likes and the tools work as long
+        // as the player is running.
+        mcp.start(config: MCPServer.Config(port: Self.mcpPort, token: mcpToken))
     }
 
     func shutdown() {
         connectionTask?.cancel()
         player.stop()
         scrobbler.trackStopped()
+        mcp.stop()
         sidecar.stop()
     }
 

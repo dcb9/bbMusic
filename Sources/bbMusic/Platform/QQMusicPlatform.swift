@@ -159,9 +159,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
     }
 
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource {
-        let requested = quality == .best ? "best" : quality.rawValue
         let fullData = try await get("/getMusicPlay/\(track.id)",
-                                     query: [.init(name: "quality", value: requested)])
+                                     query: [.init(name: "quality", value: quality.apiValue)])
         let full = Self.playback(from: fullData, mid: track.id)
         if let url = full.url {
             return .url(Self.secureURL(url))
@@ -204,6 +203,42 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         let raw = (payload["lyric"] as? String) ?? ""
         let translation = (payload["trans"] as? String) ?? ""
         return LRCParser.parse(lyric: raw, translation: translation)
+    }
+
+    /// Which qualities exist for a track.
+    ///
+    /// `/getMusicPlay` answers "no link" for a quality the account cannot use, but it does not say
+    /// which ones it *could* serve. `/song/batch` reports the actual file size for every quality,
+    /// and a non-zero size means that file exists — that is what lets the UI list real options
+    /// instead of six guesses.
+    func availableQualities(for track: Track) async throws -> [AvailableQuality] {
+        let body: [String: Any] = ["songs": [["mid": track.id]]]
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return [] }
+        let data = try await post("/song/batch", body: payload)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = root["results"] as? [[String: Any]],
+              let first = results.first,
+              let song = first["song"] as? [String: Any],
+              let file = song["file"] as? [String: Any]
+        else { return [] }
+
+        // Size field -> quality. Only qualities this app can request are listed.
+        let mapping: [(String, AudioQuality)] = [
+            ("size_flac", .flac),
+            ("size_ape", .ape),
+            ("size_320mp3", .mp3_320),
+            ("size_128mp3", .mp3_128),
+            ("size_192aac", .aac),
+            ("size_96aac", .aac),
+        ]
+        var seen = Set<AudioQuality>()
+        var available: [AvailableQuality] = []
+        for (field, quality) in mapping {
+            guard let size = file[field] as? Int, size > 0, !seen.contains(quality) else { continue }
+            seen.insert(quality)
+            available.append(AvailableQuality(quality: quality, byteSize: size))
+        }
+        return available.sorted { $0.quality.rank > $1.quality.rank }
     }
 
     // MARK: - Library
@@ -424,6 +459,27 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    private func post(_ path: String, body: Data) async throws -> Data {
+        guard let baseURL = await baseURLProvider() else {
+            throw PlatformError("QQ 音乐服务未就绪")
+        }
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        if let sessionToken {
+            request.setValue(sessionToken, forHTTPHeaderField: "X-QQ-Session")
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw PlatformError("服务响应异常")
+        }
+        if http.statusCode >= 400 {
+            throw PlatformError("服务返回 \(http.statusCode)")
+        }
+        return data
     }
 
     private func get(_ path: String, query: [Query]) async throws -> Data {

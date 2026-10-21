@@ -98,12 +98,85 @@ protocol MusicPlatform: AnyObject, Sendable {
     /// Album contents. Separate from `tracks(in:)` because an album carries its own classical
     /// credits, which a playlist does not.
     func albumTracks(_ album: Album) async throws -> (tracks: [Track], details: AlbumClassicalDetails?)
+    /// Qualities that actually exist for this track, best first. Empty when the platform cannot say.
+    func availableQualities(for track: Track) async throws -> [AvailableQuality]
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource
     func lyrics(for track: Track) async throws -> Lyrics
 }
 
+/// A stream quality the QQ Music API understands.
+///
+/// `best` is not a real format: the API resolves it to the highest quality the account can fetch.
 enum AudioQuality: String, Codable, CaseIterable, Sendable {
-    case best, flac, mp3_320, mp3_128
+    case best
+    case flac
+    case mp3_320
+    case mp3_128
+    case aac
+    case ape
+
+    /// The value the API expects in `?quality=`.
+    var apiValue: String {
+        switch self {
+        case .best: return "best"
+        case .flac: return "flac"
+        case .mp3_320: return "320"
+        case .mp3_128: return "128"
+        case .aac: return "m4a"
+        case .ape: return "ape"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .best: return "自动（最高可用）"
+        case .flac: return "无损 FLAC"
+        case .mp3_320: return "320K MP3"
+        case .mp3_128: return "128K MP3"
+        case .aac: return "AAC"
+        case .ape: return "无损 APE"
+        }
+    }
+
+    /// Short label for the player bar.
+    var shortLabel: String {
+        switch self {
+        case .best: return "自动"
+        case .flac: return "FLAC"
+        case .mp3_320: return "320K"
+        case .mp3_128: return "128K"
+        case .aac: return "AAC"
+        case .ape: return "APE"
+        }
+    }
+
+    var isLossless: Bool {
+        self == .flac || self == .ape
+    }
+
+    /// Ordering used to pick the best available option.
+    var rank: Int {
+        switch self {
+        case .ape: return 6
+        case .flac: return 5
+        case .mp3_320: return 4
+        case .aac: return 3
+        case .mp3_128: return 2
+        case .best: return 1
+        }
+    }
+}
+
+/// A quality that actually exists for a given track, with the file size the API reported.
+struct AvailableQuality: Identifiable, Hashable, Sendable {
+    let quality: AudioQuality
+    let byteSize: Int
+
+    var id: String { quality.rawValue }
+
+    var sizeText: String {
+        ByteCountFormatter.string(fromByteCount: Int64(byteSize), countStyle: .file)
+    }
 }
 
 enum PlatformConnectionState: Equatable, Sendable {

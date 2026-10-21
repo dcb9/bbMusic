@@ -35,6 +35,22 @@ final class Player: ObservableObject {
     @Published var volume: Double = 0.8 {
         didSet { player.volume = Float(volume) }
     }
+    /// The quality actually delivered for the current track, as reported by the platform.
+    @Published private(set) var deliveredQuality: AudioQuality?
+    /// Qualities that exist for the current track, best first.
+    @Published private(set) var availableQualities: [AvailableQuality] = []
+    /// User's chosen quality. `.best` means "let the platform pick the highest it can serve".
+    @Published var preferredQuality: AudioQuality = .best {
+        didSet {
+            guard oldValue != preferredQuality, currentTrack != nil else { return }
+            // Re-fetch the stream at the new quality, keeping the play position.
+            let position = currentTime
+            let wasPlaying = isPlaying
+            if let track = currentTrack {
+                reloadPreservingPosition(track, at: position, resume: wasPlaying)
+            }
+        }
+    }
     @Published private(set) var lyrics: Lyrics = .empty
 
     var currentTrack: Track? {
@@ -192,6 +208,16 @@ final class Player: ObservableObject {
 
     // MARK: - Loading
 
+    /// Re-loads the current track at a different quality without losing where the user was.
+    private func reloadPreservingPosition(_ track: Track, at position: TimeInterval, resume: Bool) {
+        pendingSeek = position
+        pendingResume = resume
+        load(track)
+    }
+
+    private var pendingSeek: TimeInterval?
+    private var pendingResume = false
+
     private func load(_ track: Track) {
         loadTask?.cancel()
         loadGeneration += 1
@@ -199,6 +225,8 @@ final class Player: ObservableObject {
         notice = nil
         lyrics = .empty
         isPreview = false
+        availableQualities = []
+        deliveredQuality = nil
         isBuffering = true
         currentTime = 0
         duration = track.duration
@@ -206,7 +234,7 @@ final class Player: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let source = try await self.platform.streamSource(for: track, quality: .best)
+                let source = try await self.platform.streamSource(for: track, quality: self.preferredQuality)
                 guard generation == self.loadGeneration else { return }
                 let url: URL
                 switch source {
@@ -216,8 +244,15 @@ final class Player: ObservableObject {
                     url = value
                     self.isPreview = true
                 }
+                // The API answers with the quality it actually served, which for `.best` may be
+                // lower than requested; keep what it said rather than what we asked for.
+                self.deliveredQuality = Self.quality(ofURL: url) ?? self.preferredQuality
                 self.attach(url: url, track: track)
                 self.onTrackStarted?(track)
+                // Availability is informational: a failure here must not affect playback.
+                if let qualities = try? await self.platform.availableQualities(for: track) {
+                    self.availableQualities = qualities
+                }
             } catch {
                 guard generation == self.loadGeneration else { return }
                 let message = error.localizedDescription
@@ -255,12 +290,34 @@ final class Player: ObservableObject {
             }
         }
         player.replaceCurrentItem(with: item)
-        player.play()
-        isPlaying = true
+        if let seek = pendingSeek {
+            player.seek(to: CMTime(seconds: seek, preferredTimescale: 600))
+            pendingSeek = nil
+        }
+        if pendingResume || pendingSeek == nil {
+            player.play()
+            isPlaying = true
+        } else {
+            isPlaying = pendingResume
+        }
 
         if track.duration == 0, item.duration.isNumeric {
             duration = CMTimeGetSeconds(item.duration)
         }
+    }
+
+    /// The API encodes the delivered format in the file name (`F000003aXkk13BiDKP.flac`, `M500…mp3`).
+    private static func quality(ofURL url: URL) -> AudioQuality? {
+        let path = url.path.lowercased()
+        if path.hasSuffix(".flac") { return .flac }
+        if path.hasSuffix(".ape") { return .ape }
+        if path.hasSuffix(".m4a") { return .aac }
+        if path.hasPrefix("/m8") || path.hasSuffix(".mp3") {
+            // `M800`/`C400` style prefixes distinguish 320 from 128 on QQ Music's CDN.
+            if path.contains("/m8") { return .mp3_320 }
+            if path.contains("/c4") || path.contains("/m5") { return .mp3_128 }
+        }
+        return nil
     }
 
     // MARK: - Observers

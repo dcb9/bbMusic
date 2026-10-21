@@ -35,6 +35,26 @@ open dist/bbMusic.app
 
 记录规则用 Last.fm 官方的那套：曲目 > 30 秒，且播放满一半或 4 分钟（取先到者），时间戳取开播时刻。**30 秒试听不计入**。断网时排队，恢复后补交，超过 14 天的丢弃（Last.fm 拒收）。
 
+## 音质
+
+播放条右侧的音质菜单只列出**当前歌曲真实存在**的档位与文件大小（用 `/song/batch` 查），
+不会给出点下去没声音的选项。默认「自动（最高可用）」，切换时保留播放位置。
+
+## MCP（给大模型用）
+
+App 内置一个本地 MCP 端点，运行中即可被 LLM 客户端调用：
+
+- 地址：`http://127.0.0.1:43119/`
+- 认证：`Authorization: Bearer <token>`，token 在「设置 → MCP」里复制
+- 只监听回环地址；不带 token 一律 401
+
+工具（10 个）：`search_music`、`play_track`、`playback_control`、`now_playing`、
+`list_playlists`、`playlist_tracks`、`list_albums`、`liked_songs`、`track_qualities`、`lyrics`。
+
+可以直接对模型说「放一首稻香」，它会 `search_music` → `play_track`。
+
+**只读 + 播放控制**：没有任何写操作，模型无法改你的歌单、红心或 Last.fm 记录。
+
 ## 自检
 
 界面无法从终端观察（截屏与辅助功能都受 TCC 限制），所以有一条无头自检，在真实 bundle 内跑真实链路：

@@ -40,6 +40,10 @@ struct RootView: View {
             ) {
                 model.showLoginSheet = true
             }
+        } else if model.section == .search {
+            // Search has its own pane with the query field. Without this branch it fell through to
+            // the library pane, which has no way to type a query at all.
+            SearchPane(model: model, player: player)
         } else if model.section == .playlists && model.selectedPlaylist == nil {
             PlaylistsPane(model: model)
         } else if model.section == .albums && model.selectedAlbum == nil {
@@ -662,6 +666,8 @@ private struct PlayerBarView: View {
                     .frame(width: 70)
             }
 
+            qualityMenu
+
             Button {
                 player.repeatMode = nextRepeat(player.repeatMode)
             } label: {
@@ -675,6 +681,43 @@ private struct PlayerBarView: View {
         .padding(.horizontal, 12)
         .frame(height: 58)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// Quality picker. Lists what the current track can actually be served at, with file sizes, so
+    /// an option is never offered that would silently produce nothing.
+    private var qualityMenu: some View {
+        Menu {
+            Picker("音质", selection: $player.preferredQuality) {
+                Text(AudioQuality.best.label).tag(AudioQuality.best)
+                if !player.availableQualities.isEmpty {
+                    Divider()
+                    ForEach(player.availableQualities) { option in
+                        Text("\(option.quality.label) · \(option.sizeText)")
+                            .tag(option.quality)
+                    }
+                }
+            }
+            .pickerStyle(.inline)
+
+            if !player.availableQualities.isEmpty {
+                Divider()
+                Text("当前歌曲可用 \(player.availableQualities.count) 种音质")
+            }
+        } label: {
+            Text(qualityLabel)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(player.currentTrack == nil ? .tertiary : .secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(player.currentTrack == nil)
+        .help("音质")
+    }
+
+    private var qualityLabel: String {
+        if let delivered = player.deliveredQuality { return delivered.shortLabel }
+        return player.preferredQuality.shortLabel
     }
 
     private var subtitle: String {

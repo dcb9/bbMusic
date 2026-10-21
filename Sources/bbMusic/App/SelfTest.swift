@@ -191,6 +191,26 @@ struct SelfTest {
                 : classicalFailures.joined(separator: "; ")
         ))
 
+        // 6d. Audio quality: the API must report real files, not a fixed menu.
+        if let track = model.results.first {
+            let qualities = (try? await model.platform.availableQualities(for: track)) ?? []
+            steps.append(Step(
+                name: "qualities",
+                ok: !qualities.isEmpty,
+                detail: qualities.isEmpty
+                    ? "none reported"
+                    : qualities.map { "\($0.quality.shortLabel) \($0.sizeText)" }.joined(separator: ", ")
+            ))
+        }
+
+        // 6e. MCP endpoint: reachable on loopback, authenticated, and exposing tools.
+        let mcpProbe = await Self.probeMCP(token: model.mcpToken)
+        steps.append(Step(
+            name: "mcp",
+            ok: mcpProbe.ok,
+            detail: mcpProbe.detail
+        ))
+
         // 7. Last.fm: credential storage, auth state, and the scrobble rule engine.
         let credentialsFile = LastFMCredentialsStore.fileURL(
             supportDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -235,6 +255,42 @@ struct SelfTest {
         ))
 
         return finish(steps)
+    }
+
+    /// Talks to the MCP endpoint the same way a client would.
+    @MainActor
+    private static func probeMCP(token: String) async -> (ok: Bool, detail: String) {
+        guard let url = URL(string: "http://127.0.0.1:\(AppModel.mcpPort)/") else {
+            return (false, "bad url")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.utf8)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = root["result"] as? [String: Any],
+                  let tools = result["tools"] as? [[String: Any]]
+            else {
+                return (false, "tools/list failed")
+            }
+            // An unauthenticated call must be refused, or the endpoint is open to any local process.
+            var unauthorized = URLRequest(url: url)
+            unauthorized.httpMethod = "POST"
+            unauthorized.httpBody = request.httpBody
+            let (_, unauthedResponse) = try await URLSession.shared.data(for: unauthorized)
+            let refused = (unauthedResponse as? HTTPURLResponse)?.statusCode == 401
+            return (
+                refused && tools.count >= 8,
+                "\(tools.count) tools, unauthenticated \(refused ? "refused" : "ALLOWED")"
+            )
+        } catch {
+            return (false, error.localizedDescription)
+        }
     }
 
     @MainActor

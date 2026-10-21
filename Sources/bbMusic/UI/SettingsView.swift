@@ -11,8 +11,10 @@ struct SettingsView: View {
                 .tabItem { Label("QQ 音乐", systemImage: "music.note") }
             LastFMSettings(model: model)
                 .tabItem { Label("Last.fm", systemImage: "waveform.path.ecg") }
+            MCPSettings(model: model)
+                .tabItem { Label("MCP", systemImage: "brain") }
         }
-        .frame(width: 460, height: 260)
+        .frame(width: 500, height: 320)
     }
 }
 
@@ -152,6 +154,62 @@ private struct LastFMSettings: View {
         case .disconnected: return "未连接"
         case .noCredentials: return "未配置"
         case .failed(let message): return message
+        }
+    }
+}
+
+
+// MARK: - MCP
+
+private struct MCPSettings: View {
+    @ObservedObject var model: AppModel
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                LabeledContent("状态") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(model.mcp.isRunning ? Color.green : Color.secondary.opacity(0.4))
+                            .frame(width: 7, height: 7)
+                        Text(model.mcp.isRunning ? "运行中" : "未启动")
+                    }
+                }
+                LabeledContent("地址") {
+                    Text("http://127.0.0.1:\(AppModel.mcpPort)/")
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+                LabeledContent("Token") {
+                    HStack(spacing: 6) {
+                        Text(model.mcpToken)
+                            .font(.system(size: 10, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Button(copied ? "已复制" : "复制") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(model.mcpToken, forType: .string)
+                            copied = true
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                LabeledContent("能力") {
+                    Text("搜索 · 播放控制 · 歌单/专辑/红心歌单读取 · 音质 · 歌词")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+
+            Spacer(minLength: 0)
+
+            Text("只监听本机回环地址，需要 Bearer token。不提供任何写操作——模型不能改你的歌单、红心或 Last.fm。")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .padding(16)
         }
     }
 }
