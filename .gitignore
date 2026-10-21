@@ -1,0 +1,9 @@
+# SwiftPM build products
+.build/
+dist/
+
+# Sidecar dependencies are installed from package.json; do not commit them.
+sidecar/node_modules/
+
+.DS_Store
+*.xcuserstate
