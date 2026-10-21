@@ -60,6 +60,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var selectedAlbum: Album?
     @Published private(set) var isLoadingLibrary = false
     @Published private(set) var libraryError: String?
+    /// Classical credits for the album currently open, when the platform supplied them.
+    @Published private(set) var albumDetails: AlbumClassicalDetails?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -176,6 +178,7 @@ final class AppModel: ObservableObject {
         pane = .list
         selectedPlaylist = nil
         selectedAlbum = nil
+        albumDetails = nil
         libraryError = nil
         guard connection.isConnected else {
             libraryTracks = []
@@ -197,6 +200,7 @@ final class AppModel: ObservableObject {
         section = .playlists
         pane = .list
         selectedAlbum = nil
+        albumDetails = nil
         selectedPlaylist = playlist
         await loadTracks { try await platform.tracks(in: playlist) }
     }
@@ -206,13 +210,19 @@ final class AppModel: ObservableObject {
         pane = .list
         selectedPlaylist = nil
         selectedAlbum = album
-        await loadTracks { try await platform.search("\(album.name) \(album.artist)") }
+        albumDetails = nil
+        await loadTracks {
+            let result = try await platform.albumTracks(album)
+            albumDetails = result.details
+            return result.tracks
+        }
     }
 
     /// Returns from a playlist/album detail to its list.
     func closeDetail() {
         selectedPlaylist = nil
         selectedAlbum = nil
+        albumDetails = nil
         libraryTracks = []
         libraryError = nil
     }

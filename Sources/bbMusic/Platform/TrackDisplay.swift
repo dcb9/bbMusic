@@ -43,9 +43,11 @@ enum TrackDisplay {
 
     static func info(for track: Track) -> Info {
         let work = track.title.trimmingCharacters(in: .whitespaces)
+        // A platform-provided composer settles the question without guessing.
+        let structuredClassical = !(track.composer ?? "").isEmpty
         let catalogue = catalogueNumber(in: work)
         let performers = performers(from: track.artist)
-        let isClassical = isClassical(
+        let isClassical = structuredClassical || isClassical(
             title: work,
             artist: track.artist,
             album: track.album,
@@ -97,6 +99,21 @@ enum TrackDisplay {
         // Several performers AND a long free-text title reads like a classical credit block.
         if performerCount >= 2 && title.count > 24 { return true }
         return false
+    }
+
+    /// The credit line to show under a title.
+    ///
+    /// Platform-provided credits win over the heuristics: QQ Music's album endpoint states the
+    /// composer and the work outright, and guessing from a title when the answer is already known
+    /// would be worse than useless. Heuristics only fill the gap for search results and playlists.
+    static func creditLine(for track: Track, heuristic: Info) -> String? {
+        if let composer = track.composer, !composer.isEmpty {
+            let work = track.work ?? ""
+            let performers = track.artist
+            if work.isEmpty { return "\(composer) · \(performers)" }
+            return "\(composer) · \(work)"
+        }
+        return heuristic.isClassical ? secondaryLine(for: track) : nil
     }
 
     /// The secondary line under a title: performers first for classical, album otherwise.

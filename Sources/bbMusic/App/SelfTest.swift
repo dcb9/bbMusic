@@ -133,6 +133,39 @@ struct SelfTest {
             }
         }
 
+        // 6b2. Album contents + playback. This is the path that was broken: album lookup used a
+        // search instead of the album endpoint, so album tracks never resolved to audio.
+        let albumToTest = model.albums.first(where: {
+            $0.name.lowercased().contains("mozart") || $0.name.contains("古典")
+        }) ?? model.albums.first
+        if model.connection.isConnected, let album = albumToTest {
+            await model.open(album)
+            let albumTracks = model.libraryTracks
+            steps.append(Step(
+                name: "album-tracks",
+                ok: !albumTracks.isEmpty,
+                detail: "\(album.name): \(albumTracks.count) tracks, details=\(model.albumDetails?.composer ?? "none")"
+            ))
+            if let first = albumTracks.first {
+                do {
+                    let source = try await model.platform.streamSource(for: first, quality: .best)
+                    let playable: Bool
+                    switch source {
+                    case .url: playable = true
+                    case .preview: playable = true
+                    }
+                    steps.append(Step(
+                        name: "album-play",
+                        ok: playable,
+                        detail: "resolved audio for \(first.title.prefix(40))"
+                    ))
+                } catch {
+                    steps.append(Step(name: "album-play", ok: false, detail: error.localizedDescription))
+                }
+            }
+            model.closeDetail()
+        }
+
         // 6c. Classical-friendly display derivation.
         let classicalSamples: [(String, String, String, String?, Bool)] = [
             ("Nocturne in E-flat major, Op. 9 No. 2", "Arthur Rubinstein", "Chopin: Nocturnes", "Op. 9 No. 2", true),

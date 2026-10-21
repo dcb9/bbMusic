@@ -14,6 +14,12 @@ struct Track: Identifiable, Codable, Hashable, Sendable {
     let artworkURL: URL?
     /// Whether the platform considers this track available to the current account.
     let isPlayable: Bool
+    /// Structured classical credit, when the platform provides one (QQ Music does for albums).
+    /// Preferred over the title/artist heuristics in `TrackDisplay` when present.
+    var composer: String?
+    var work: String?
+    /// Disc label ("Disc 1") for multi-disc albums.
+    var disc: String?
 
     var durationText: String {
         guard duration > 0 else { return "--:--" }
@@ -89,6 +95,9 @@ protocol MusicPlatform: AnyObject, Sendable {
     func playlists() async throws -> [Playlist]
     func tracks(in playlist: Playlist) async throws -> [Track]
     func albums() async throws -> [Album]
+    /// Album contents. Separate from `tracks(in:)` because an album carries its own classical
+    /// credits, which a playlist does not.
+    func albumTracks(_ album: Album) async throws -> (tracks: [Track], details: AlbumClassicalDetails?)
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource
     func lyrics(for track: Track) async throws -> Lyrics
 }
@@ -118,4 +127,11 @@ enum PlatformConnectionState: Equatable, Sendable {
         case .failed: return "连接失败"
         }
     }
+}
+
+/// Classical credits that come with an album rather than with each track.
+struct AlbumClassicalDetails: Sendable, Equatable {
+    var composer: String?
+    var work: String?
+    var discCount: Int
 }

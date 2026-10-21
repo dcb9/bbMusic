@@ -318,7 +318,13 @@ private struct TracksPane: View {
                     symbol: "music.note.list"
                 )
             } else {
-                TrackList(tracks: model.libraryTracks, player: player, selectedID: $model.selectedTrackID)
+                TrackList(
+                    tracks: model.libraryTracks,
+                    player: player,
+                    selectedID: $model.selectedTrackID,
+                    showsDiscs: model.selectedAlbum != nil,
+                    showsAlbum: model.selectedPlaylist == nil
+                )
             }
         }
     }
@@ -478,23 +484,41 @@ private struct TrackList: View {
     let tracks: [Track]
     @ObservedObject var player: Player
     @Binding var selectedID: String?
+    /// Albums show a disc heading per disc; playlists and search results do not.
+    var showsDiscs: Bool = false
+    /// Playlists hide the album column; search results and album pages show it.
+    var showsAlbum: Bool = true
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                    if showsDiscs, let heading = discHeading(at: index) {
+                        Text(heading)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 10)
+                            .padding(.bottom, 4)
+                    }
                     TrackRow(
                         index: index,
                         track: track,
                         isCurrent: player.currentTrack?.id == track.id,
                         isPlaying: player.currentTrack?.id == track.id && player.isPlaying,
-                        isSelected: selectedID == track.id
+                        isSelected: selectedID == track.id,
+                        showsAlbum: showsAlbum
                     )
-                    // Single click selects; playing is a deliberate double click, as in Finder.
-                    .onTapGesture(count: 2) {
-                        selectedID = track.id
-                        player.play(tracks: tracks, startingAt: index)
-                    }
+                    // `.simultaneousGesture` instead of two `onTapGesture`s: stacking a single- and a
+                    // double-tap gesture makes SwiftUI wait for the single-tap to fail before it can
+                    // resolve the double-tap, which is what made selection feel a second late.
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            selectedID = track.id
+                            player.play(tracks: tracks, startingAt: index)
+                        }
+                    )
                     .onTapGesture {
                         selectedID = track.id
                     }
@@ -502,6 +526,14 @@ private struct TrackList: View {
                 }
             }
         }
+    }
+
+    /// A disc heading appears before the first track of each disc.
+    private func discHeading(at index: Int) -> String? {
+        let disc = tracks[index].disc
+        guard let disc, !disc.isEmpty else { return nil }
+        if index == 0 { return disc }
+        return tracks[index - 1].disc == disc ? nil : disc
     }
 }
 
@@ -511,6 +543,9 @@ private struct TrackRow: View {
     let isCurrent: Bool
     let isPlaying: Bool
     let isSelected: Bool
+    /// Album column. Hidden inside a playlist, where every row would repeat the same or an
+    /// irrelevant album; shown in search results and on album pages.
+    var showsAlbum: Bool = true
 
     var body: some View {
         let info = TrackDisplay.info(for: track)
@@ -533,8 +568,8 @@ private struct TrackRow: View {
                     .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
                     .lineLimit(1)
                 // Classical recordings lead with performers; pop leads with the album.
-                if info.isClassical {
-                    Text(TrackDisplay.secondaryLine(for: track))
+                if let credit = TrackDisplay.creditLine(for: track, heuristic: info) {
+                    Text(credit)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -548,11 +583,13 @@ private struct TrackRow: View {
                 .lineLimit(1)
                 .frame(width: 130, alignment: .leading)
 
-            Text(track.album)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .frame(width: 150, alignment: .leading)
+            if showsAlbum {
+                Text(track.album)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .frame(width: 150, alignment: .leading)
+            }
 
             Text(track.durationText)
                 .font(.system(size: 11).monospacedDigit())

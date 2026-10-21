@@ -264,6 +264,56 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return songs.compactMap(Self.track(from:))
     }
 
+    /// Album tracks plus the structured classical credits QQ Music ships with an album.
+    ///
+    /// The endpoint is `/getAlbumInfo?albummid=…` — the route's `:albummid?` segment is optional, so
+    /// passing it as a path component returns `no albummid` instead of the album.
+    func albumTracks(_ album: Album) async throws -> (tracks: [Track], details: AlbumClassicalDetails?) {
+        let data = try await get("/getAlbumInfo", query: [.init(name: "albummid", value: album.id)])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let response = root["response"] as? [String: Any],
+              let payload = response["data"] as? [String: Any]
+        else {
+            throw PlatformError("专辑信息响应异常")
+        }
+        let raw = (payload["list"] as? [[String: Any]]) ?? []
+        guard !raw.isEmpty else { return ([], nil) }
+
+        // `classic_list` groups runs of tracks by composer/work and names the disc they start on.
+        let classics = (payload["classic_list"] as? [[String: Any]]) ?? []
+        var credits: [(startIndex: Int, composer: String?, work: String?, disc: String?)] = []
+        for entry in classics {
+            let index = (entry["index"] as? [Int])?.first ?? 0
+            var composer: String?
+            var work: String?
+            for desc in (entry["desc"] as? [[String: Any]]) ?? [] {
+                switch desc["type"] as? String {
+                case "author": composer = desc["name"] as? String
+                case "collection": work = desc["name"] as? String
+                default: break
+                }
+            }
+            credits.append((index, composer, work, entry["CD"] as? String))
+        }
+        credits.sort { $0.startIndex < $1.startIndex }
+
+        let tracks = raw.enumerated().compactMap { offset, item -> Track? in
+            guard var track = Self.track(from: item) else { return nil }
+            // The most recent credit block at or before this track applies to it.
+            let credit = credits.last { $0.startIndex <= offset }
+            track.composer = credit?.composer
+            track.work = credit?.work
+            track.disc = credit?.disc
+            return track
+        }
+        let details = AlbumClassicalDetails(
+            composer: credits.compactMap(\.composer).first,
+            work: credits.compactMap(\.work).first,
+            discCount: Set(credits.compactMap(\.disc)).count
+        )
+        return (tracks, details)
+    }
+
     func albums() async throws -> [Album] {
         var collected: [Album] = []
         var offset = 0
@@ -328,7 +378,10 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             album: album,
             duration: interval,
             artworkURL: artwork,
-            isPlayable: isPlayable
+            isPlayable: isPlayable,
+            composer: nil,
+            work: nil,
+            disc: nil
         )
     }
 
