@@ -145,9 +145,16 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             .init(name: "page", value: "1"),
             .init(name: "limit", value: "50"),
         ])
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = root["items"] as? [[String: Any]]
-        else { return [] }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw PlatformError("搜索响应不是 JSON")
+        }
+        // A missing `items` array is a real upstream failure, not an empty search: say so instead of
+        // rendering "no results" for what is actually an error.
+        guard let items = root["items"] as? [[String: Any]] else {
+            let code = root["code"] as? Int ?? -1
+            let message = (root["message"] as? String) ?? "上游没有返回结果列表"
+            throw PlatformError("搜索失败（code \(code)）：\(message)")
+        }
         return items.compactMap(Self.track(from:))
     }
 

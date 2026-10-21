@@ -39,9 +39,14 @@ struct SelfTest {
             detail: model.connection.label
         ))
 
-        // 3. Search
+        // 3. Search. Retried once: the upstream occasionally returns an empty page, and a transient
+        // upstream hiccup should not be reported as a product failure.
         model.query = "稻香"
         await model.runSearch()
+        if model.results.isEmpty {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await model.runSearch()
+        }
         let results = model.results
         steps.append(Step(
             name: "search",
