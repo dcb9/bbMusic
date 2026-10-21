@@ -19,19 +19,40 @@ if (process.env.PORT === '0' || process.env.PORT === '') {
 
 const HOST = '127.0.0.1';
 const HANDSHAKE = 'BBMUSIC_PORT ';
+const PACKAGE = '@yakult-green-tea/qq-music-api';
 
 function fail(message) {
   process.stderr.write(`sidecar: ${message}\n`);
   process.exit(1);
 }
 
-let app;
+let root;
 try {
-  app = require('@yakult-green-tea/qq-music-api').default;
+  root = require(PACKAGE);
 } catch (error) {
   fail(`cannot load QQ Music API: ${error && error.message}`);
 }
 
+// Login state has to survive a sidecar restart, otherwise every crash forces the user to scan a
+// new QR code. The upstream ships an encrypted file repository for exactly this, but importing the
+// package does NOT install it: without this call the session store stays in memory, restores zero
+// sessions, and every authenticated route answers 401 even though the session file is intact.
+try {
+  const repositoryModule = require(`${PACKAGE}/dist/src/services/auth/fileAuthSessionRepository.js`);
+  const repository = repositoryModule.createConfiguredAuthSessionRepository(process.env);
+  if (repository) {
+    root.configureAuthSessionRepository(repository);
+    process.stderr.write(`sidecar: session persistence ${repository.kind}\n`);
+  } else {
+    // Neither QQ_SESSION_SECRET nor QQ_AUTH_SESSION_PATH was set; logins will not survive a
+    // restart. Say so instead of silently degrading.
+    process.stderr.write('sidecar: session persistence unavailable (no secret/path)\n');
+  }
+} catch (error) {
+  process.stderr.write(`sidecar: session persistence failed: ${error && error.message}\n`);
+}
+
+const app = root.default;
 if (!app || typeof app.listen !== 'function') {
   fail('QQ Music API did not export a Koa application');
 }

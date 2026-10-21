@@ -12,14 +12,41 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
 
     private let session: URLSession
     private let baseURLProvider: @MainActor () -> URL?
+    /// Where the session token is kept so the app can re-attach to the sidecar's persisted login
+    /// after a restart. The sidecar owns the credentials; this is only the key that unlocks them.
+    private let tokenURL: URL?
     private var sessionToken: String?
 
-    init(baseURLProvider: @escaping @MainActor () -> URL?) {
+    init(baseURLProvider: @escaping @MainActor () -> URL?, tokenURL: URL? = nil) {
         self.baseURLProvider = baseURLProvider
+        self.tokenURL = tokenURL
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         self.session = URLSession(configuration: config)
+        if let tokenURL,
+           let stored = try? String(contentsOf: tokenURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !stored.isEmpty {
+            self.sessionToken = stored
+        }
+    }
+
+    /// Remembers the token handed out when a QR login completes.
+    ///
+    /// The sidecar sets it as an HttpOnly cookie, which a URLSession without a cookie store would
+    /// silently drop — and without it every authenticated call answers 401 even though the login
+    /// succeeded.
+    private func adoptSessionToken(_ token: String) {
+        sessionToken = token
+        guard let tokenURL else { return }
+        try? token.write(to: tokenURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
+    }
+
+    private func clearSessionToken() {
+        sessionToken = nil
+        if let tokenURL { try? FileManager.default.removeItem(at: tokenURL) }
     }
 
     // MARK: - Connection
@@ -66,11 +93,21 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
 
     /// Polls a QR challenge. QQ Music answers with 801/802/803/800 in the `code` field.
     func pollQRLogin(_ challenge: QRChallenge) async throws -> QRStatus {
-        let data = try await get("/login/qr/check", query: [.init(name: "key", value: challenge.unikey)])
+        let (data, response) = try await getWithResponse(
+            "/login/qr/check",
+            query: [.init(name: "key", value: challenge.unikey)]
+        )
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let code = root["code"] as? Int
         else {
             throw PlatformError("登录状态响应异常")
+        }
+        // 803 carries the session token in a Set-Cookie header; everything after login depends on
+        // holding on to it.
+        if code == 803,
+           let token = Self.sessionToken(from: response),
+           !token.isEmpty {
+            adoptSessionToken(token)
         }
         switch code {
         case 801: return .waiting
@@ -94,7 +131,7 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
 
     func signOut() async throws {
         _ = try? await get("/logout", query: [])
-        sessionToken = nil
+        clearSessionToken()
     }
 
     // MARK: - Catalog
@@ -223,7 +260,26 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         }
     }
 
+    /// `qqmusic_session=<token>` from the response's Set-Cookie header.
+    private static func sessionToken(from response: HTTPURLResponse) -> String? {
+        let cookies = response.value(forHTTPHeaderField: "Set-Cookie") ?? ""
+        for entry in cookies.split(separator: ",") {
+            for part in entry.split(separator: ";") {
+                let trimmed = part.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("qqmusic_session=") else { continue }
+                let value = trimmed.dropFirst("qqmusic_session=".count)
+                if !value.isEmpty { return String(value) }
+            }
+        }
+        return nil
+    }
+
     private func get(_ path: String, query: [Query]) async throws -> Data {
+        let (data, _) = try await getWithResponse(path, query: query)
+        return data
+    }
+
+    private func getWithResponse(_ path: String, query: [Query]) async throws -> (Data, HTTPURLResponse) {
         guard let baseURL = await baseURLProvider() else {
             throw PlatformError("QQ 音乐服务未就绪")
         }
@@ -251,7 +307,7 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             }
             throw PlatformError("服务返回 \(http.statusCode)")
         }
-        return data
+        return (data, http)
     }
 }
 

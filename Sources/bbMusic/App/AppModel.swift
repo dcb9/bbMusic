@@ -61,10 +61,13 @@ final class AppModel: ObservableObject {
         let sidecarDirectory = Self.sidecarDirectory()
         let manager = SidecarManager(sidecarDirectory: sidecarDirectory, supportDirectory: support)
         self.sidecar = manager
-        self.platform = QQMusicPlatform { [weak manager] in
-            guard let port = manager?.state.port else { return nil }
-            return URL(string: "http://127.0.0.1:\(port)")
-        }
+        self.platform = QQMusicPlatform(
+            baseURLProvider: { [weak manager] in
+                guard let port = manager?.state.port else { return nil }
+                return URL(string: "http://127.0.0.1:\(port)")
+            },
+            tokenURL: support.appendingPathComponent("qq-session-token")
+        )
         self.player = Player(platform: platform)
         self.scrobbler = Scrobbler(
             storeURL: support.appendingPathComponent("scrobble-queue.json")
