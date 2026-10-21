@@ -4,9 +4,9 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 
 ## 现在能做什么
 
-搜索歌曲、播放（含 30 秒试听降级）、队列、进度/音量/播放模式、歌词滚动高亮、扫码登录 QQ 音乐。
+搜索歌曲、播放（含 30 秒试听降级）、队列、进度/音量/播放模式、歌词滚动高亮、扫码登录 QQ 音乐、Last.fm 自动记录。
 
-歌单、每日推荐、排行榜、红心写回、Last.fm 记录尚未实现——对应入口会明确说明，而不是假装加载。
+歌单、每日推荐、排行榜、红心写回尚未实现——对应入口会明确说明，而不是假装加载。
 
 ## 构建与运行
 
@@ -22,6 +22,18 @@ open dist/bbMusic.app
 ```
 
 `NODE_BIN=/path/to/node ./Scripts/build-app.sh` 可指定要内嵌的 Node（需要 20+）。
+
+## Last.fm
+
+应用身份（API key + shared secret）**不在仓库里**——shared secret 足以冒充本应用签名，所以只存 Keychain。每台机器跑一次：
+
+```sh
+./Scripts/seed-lastfm.sh     # 交互输入，或 LASTFM_API_KEY=... LASTFM_SECRET=... ./Scripts/seed-lastfm.sh
+```
+
+然后在 App 里点侧边栏底部的「连接 Last.fm」，浏览器确认即可（desktop token 流程，不需要回调地址）。
+
+记录规则用 Last.fm 官方的那套：曲目 > 30 秒，且播放满一半或 4 分钟（取先到者），时间戳取开播时刻。**30 秒试听不计入**。断网时排队，恢复后补交，超过 14 天的丢弃（Last.fm 拒收）。
 
 ## 自检
 

@@ -46,6 +46,8 @@ final class Player: ObservableObject {
     var onTrackStarted: ((Track) -> Void)?
     /// Called with the user-facing reason a track could not be played.
     var onPlaybackFailure: ((String) -> Void)?
+    /// Called on every progress tick, so the scrobbler can judge the play against Last.fm's rule.
+    var onProgress: ((TimeInterval) -> Void)?
 
     // MARK: - Internals
 
@@ -272,6 +274,7 @@ final class Player: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentTime = CMTimeGetSeconds(time)
+                self.onProgress?(self.currentTime)
                 if let item = self.player.currentItem, item.duration.isNumeric {
                     let value = CMTimeGetSeconds(item.duration)
                     if value.isFinite, value > 0 { self.duration = value }

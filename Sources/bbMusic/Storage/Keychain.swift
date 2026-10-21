@@ -31,17 +31,11 @@ enum Keychain {
         )
     }
 
-    /// Persists the API pair, seeding it with `fallback` when the keychain is empty.
-    ///
-    /// The pair is what identifies the application to Last.fm, so it is stored once and then left
-    /// alone; re-seeding on every launch would silently discard a user's own key.
-    @discardableResult
-    static func ensureLastFMApp(apiKey fallbackKey: String, sharedSecret fallbackSecret: String) -> LastFMClient.Credentials? {
-        if let existing = loadLastFMCredentials() { return existing }
-        guard !fallbackKey.isEmpty, !fallbackSecret.isEmpty else { return nil }
-        write(.apiKey, fallbackKey)
-        write(.sharedSecret, fallbackSecret)
-        return loadLastFMCredentials()
+    /// Stores the application identity. Called from `Scripts/seed-lastfm.sh`, never at runtime:
+    /// the shared secret is not part of the source tree.
+    static func storeLastFMApp(apiKey: String, sharedSecret: String) {
+        write(.apiKey, apiKey)
+        write(.sharedSecret, sharedSecret)
     }
 
     static func saveSession(key: String, username: String) {

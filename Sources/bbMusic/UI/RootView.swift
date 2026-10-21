@@ -87,26 +87,47 @@ private struct SidebarView: View {
 
             Spacer()
 
-            Button {
-                model.showLoginSheet = true
-            } label: {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(model.connection.isConnected ? Color.green : Color.secondary.opacity(0.4))
-                        .frame(width: 6, height: 6)
-                    Text(model.connection.isConnected ? "已登录" : "登录 QQ 音乐")
-                        .font(.system(size: 11))
-                    Spacer()
+            VStack(spacing: 0) {
+                Divider()
+                // Two account rows, same shape: the platform, then the scrobbler.
+                statusRow(
+                    label: model.connection.isConnected
+                        ? "QQ 音乐 · \(model.connection.label)"
+                        : "登录 QQ 音乐",
+                    connected: model.connection.isConnected
+                ) {
+                    model.showLoginSheet = true
                 }
-                .contentShape(Rectangle())
+                statusRow(
+                    label: model.scrobbler.connection.isConnected
+                        ? "Last.fm · \(model.scrobbler.connection.label)"
+                        : "连接 Last.fm",
+                    connected: model.scrobbler.connection.isConnected
+                ) {
+                    model.showLastFMPanel = true
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .overlay(alignment: .top) { Divider() }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+    }
+
+    private func statusRow(label: String, connected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(connected ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 6, height: 6)
+                Text(label)
+                    .font(.system(size: 10.5))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     private func section(_ title: String, items: [AppModel.Section]) -> some View {

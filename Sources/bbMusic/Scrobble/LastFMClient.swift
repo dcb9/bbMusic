@@ -112,9 +112,21 @@ struct LastFMClient: Sendable {
         )
     }
 
+    /// Outcome of one submission, per track.
+    struct ScrobbleOutcome: Sendable {
+        /// Records Last.fm accepted and stored.
+        var accepted: Int
+        /// Records Last.fm refused permanently (ignored artist, bad metadata, too old). Retrying
+        /// these can never succeed, so the caller drops them instead of looping forever.
+        var ignored: Int
+    }
+
     /// Submits one or more played tracks. Last.fm accepts up to 50 per batch.
-    func scrobble(_ tracks: [ScrobbleRecord]) async throws {
-        guard !tracks.isEmpty else { return }
+    ///
+    /// Last.fm answers `200 OK` even when it ignored a submission, so the body has to be inspected:
+    /// treating a `200` as success would silently delete unsent scrobbles from the queue.
+    func scrobble(_ tracks: [ScrobbleRecord]) async throws -> ScrobbleOutcome {
+        guard !tracks.isEmpty else { return ScrobbleOutcome(accepted: 0, ignored: 0) }
         var params: [String: String] = [:]
         for (index, track) in tracks.prefix(50).enumerated() {
             // Array notation is required for batches; parameter names are sorted ASCII-wise, which
@@ -125,13 +137,22 @@ struct LastFMClient: Sendable {
             if !track.album.isEmpty { params["album[\(index)]"] = track.album }
             if track.duration > 0 { params["duration[\(index)]"] = String(Int(track.duration.rounded())) }
         }
-        _ = try await call(
+        let data = try await call(
             method: "track.scrobble",
             params: params,
             httpMethod: "POST",
             signed: true,
             requiresSession: true
         )
+        let attr = ((data["scrobbles"] as? [String: Any])?["@attr"] as? [String: Any]) ?? [:]
+        let accepted = Int(attr["accepted"] as? String ?? "") ?? (attr["accepted"] as? Int) ?? 0
+        let ignored = Int(attr["ignored"] as? String ?? "") ?? (attr["ignored"] as? Int) ?? 0
+        // No @attr at all means Last.fm accepted the call without a per-track report; treat that as
+        // accepted rather than losing the records.
+        if attr.isEmpty {
+            return ScrobbleOutcome(accepted: tracks.count, ignored: 0)
+        }
+        return ScrobbleOutcome(accepted: accepted, ignored: ignored)
     }
 
     // MARK: - Transport

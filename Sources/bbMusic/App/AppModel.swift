@@ -48,8 +48,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var connection: PlatformConnectionState = .unknown
     @Published private(set) var sidecarState: SidecarManager.State = .idle
     @Published var showLoginSheet = false
+    @Published var showLastFMPanel = false
 
     let player: Player
+    let scrobbler: Scrobbler
     let platform: QQMusicPlatform
     private let sidecar: SidecarManager
     private var connectionTask: Task<Void, Never>?
@@ -64,6 +66,19 @@ final class AppModel: ObservableObject {
             return URL(string: "http://127.0.0.1:\(port)")
         }
         self.player = Player(platform: platform)
+        self.scrobbler = Scrobbler(
+            storeURL: support.appendingPathComponent("scrobble-queue.json")
+        )
+
+        // Playback drives the scrobbler; the scrobbler never drives playback.
+        player.onTrackStarted = { [weak self] track in
+            guard let self else { return }
+            self.scrobbler.playerIsPreview = self.player.isPreview
+            self.scrobbler.trackStarted(track, isPreview: self.player.isPreview)
+        }
+        player.onProgress = { [weak self] elapsed in
+            self?.scrobbler.updateProgress(elapsed)
+        }
 
         manager.onStateChange = { [weak self] state in
             guard let self else { return }
@@ -75,12 +90,17 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        // Credentials come from the Keychain only. The application identity is never compiled in:
+        // the shared secret is enough to sign requests as this application, so it must not be
+        // readable from the source tree or from `strings` on the binary.
+        scrobbler.bootstrap()
         sidecar.start()
     }
 
     func shutdown() {
         connectionTask?.cancel()
         player.stop()
+        scrobbler.trackStopped()
         sidecar.stop()
     }
 

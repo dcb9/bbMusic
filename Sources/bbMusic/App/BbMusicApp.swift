@@ -15,6 +15,9 @@ struct BbMusicApp: App {
                         .sheet(isPresented: $model.showLoginSheet) {
                             LoginSheet(model: model)
                         }
+                        .sheet(isPresented: $model.showLastFMPanel) {
+                            LastFMPanel(scrobbler: model.scrobbler)
+                        }
                         .onAppear {
                             delegate.model = model
                             model.start()

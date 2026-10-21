@@ -64,10 +64,12 @@ final class Scrobbler: ObservableObject {
 
     // MARK: - Setup
 
-    /// Seeds the API pair (from the keychain, falling back to the bundled placeholders) and decides
-    /// the initial connection state.
-    func bootstrap(apiKey: String, sharedSecret: String) {
-        guard let credentials = Keychain.ensureLastFMApp(apiKey: apiKey, sharedSecret: sharedSecret) else {
+    /// Reads the application identity and session from the Keychain and decides the initial state.
+    ///
+    /// Nothing is seeded from source on purpose — see `Keychain` for why the shared secret must not
+    /// live in the repository.
+    func bootstrap() {
+        guard let credentials = Keychain.loadLastFMCredentials() else {
             connection = .noCredentials
             return
         }
@@ -225,14 +227,25 @@ final class Scrobbler: ObservableObject {
         while !pending.isEmpty {
             let batch = Array(pending.prefix(50))
             do {
-                try await client.scrobble(batch)
-                let keys = Set(batch.map(\.idempotencyKey))
-                pending.removeAll { keys.contains($0.idempotencyKey) }
+                let outcome = try await client.scrobble(batch)
+                // Only remove what Last.fm actually stored. Records it ignored are dropped too —
+                // they are permanently unacceptable (bad metadata, artist ignored, too old) and
+                // retrying can never succeed.
+                let resolved = min(outcome.accepted + outcome.ignored, batch.count)
+                let settled = Set(batch.prefix(resolved).map(\.idempotencyKey))
+                if resolved == 0 {
+                    // Nothing settled: Last.fm is refusing the batch wholesale. Keep it and stop,
+                    // rather than spinning on the same records.
+                    return
+                }
+                pending.removeAll { settled.contains($0.idempotencyKey) }
                 saveQueue()
                 pendingCount = pending.count
-                lastActivity = batch.count == 1
-                    ? "已记录到 Last.fm · \(batch[0].title)"
-                    : "已记录 \(batch.count) 首到 Last.fm"
+                if outcome.accepted > 0 {
+                    lastActivity = outcome.accepted == 1
+                        ? "已记录到 Last.fm · \(batch[0].title)"
+                        : "已记录 \(outcome.accepted) 首到 Last.fm"
+                }
             } catch LastFMClient.ClientError.invalidSession {
                 connection = .disconnected
                 return

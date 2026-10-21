@@ -28,7 +28,7 @@ flowchart LR
     NP["Now Playing<br/>MPNowPlayingInfoCenter + 远程指令"]
     PL["Platform 层<br/>MusicPlatform 协议"]
     QQ["QQMusicPlatform<br/>适配器"]
-    SC["Scrobble<br/>Last.fm 客户端 + 待提交队列"]
+    SC["Scrobble<br/>Last.fm 客户端 + 待提交队列 + 规则引擎"]
     LY["Lyrics<br/>LRC 解析 + 高亮"]
     ST["Storage<br/>Keychain + JSON 状态"]
   end
@@ -78,9 +78,9 @@ flowchart LR
 | `Playback` | 队列、当前曲目、播放模式、进度、音量、失败重试 | 不知道曲目来自哪个平台，不做网络请求 |
 | `Platform` | 平台无关模型（`Track` / `Playlist` / `Lyrics`）、`MusicPlatform` 协议、sidecar 生命周期 | 不碰界面、不碰 `AVPlayer`、不碰 scrobble |
 | `QQMusicPlatform` | 把 QQ 音乐响应映射为统一模型；扫码登录流程；红心写回；取流地址 | 不决定「播放什么」，只回答「怎么拿到它」 |
-| `Scrobble` | Last.fm 授权、now-playing、播放判定、待提交队列持久化 | 不控制播放，只观察播放进度 |
+| `Scrobble` | Last.fm 授权、now-playing、播放判定（官方规则）、待提交队列持久化 | 不控制播放，只观察播放进度 |
 | `Lyrics` | LRC 解析（含翻译行）、按时间定位当前行 | 不拉取歌词，由 `Platform` 提供 |
-| `Storage` | Keychain 封装、应用状态文件、目录约定 | 不含业务判断 |
+| `Storage` | Keychain 封装（Last.fm API key / secret / session）、应用状态文件、目录约定 | 不含业务判断 |
 
 **依赖方向**：`UI → Playback / Platform / Lyrics`，`Playback → Platform`（只为取流地址），`Scrobble → Storage`。没有任何模块反向依赖 `UI`。`QQMusicPlatform` 是唯一知道 QQ 音乐存在的地方——换成 Spotify 时它整体替换，其余模块不变。
 
@@ -103,14 +103,29 @@ flowchart LR
 - **scrobble 判定跟随 Last.fm 官方规则**：曲目长于 30 秒，且播放满 50% 或 4 分钟（取先到者）。不满足则丢弃，不做「凑数」提交。
 - **补交有时间上限**：Last.fm 不接受超过 14 天的记录（官方未写入文档，社区与官方回复一致）。待提交队列按此裁剪，过期条目丢弃并在诊断日志里留下一条，绝不假装成功。
 - **界面状态可从状态推导。** 侧边栏选中项、列表内容、播放条、歌词高亮都由「当前导航 + 队列 + 当前曲目 + 加载状态」决定，不存在只能由某次点击写入的隐藏标志。
+- **scrobble 的“成功”以 Last.fm 的正文为准，不以 HTTP 状态为准。** Last.fm 在被忽略时同样返回 `200`，正文里是 `@attr.ignored` / `@attr.accepted`。把 `200` 当成功会把没提交上去的记录从队列里删掉，造成静默丢失。
+- **只有 Last.fm 真正收下的记录才出队。** `accepted` 与 `ignored` 都算「已了结」（ignored 是永久性拒收，重试不可能成功），其余留在队列里等下次。
+- **试听不算播放。** 30 秒试听既不发 now-playing 也不记 scrobble——它会把「听了半首歌」写成假记录。
 - **平台能力差异显式呈现。** 导航固定不随平台变化；未登录或平台不支持时，对应位置显示明确文案（如「需要先登录 QQ 音乐」「此平台暂不支持每日推荐」），不隐藏入口、不静默失败。
+
+## Last.fm 集成
+
+**认证**走 Last.fm 的 desktop 流程：`auth.getToken` → 在浏览器打开 `last.fm/api/auth` → 轮询 `auth.getSession`。轮询让回调 URL 变得不必要，因此不需要本地 HTTP 服务接回调。轮询期间 `error 14` 是正常中间态，不是失败。
+
+**签名**是 `md5(按 key 排序拼接 key+value + shared secret)`，`api_sig` 与 `format` 不参与。批量 scrobble 用数组下标（`artist[0]`…），参数名按 ASCII 排序，因此 `artist[10]` 排在 `artist[2]` 之前。
+
+**凭证**存 Keychain（API key、shared secret、session key、用户名）。源码只带占位常量，首次使用时写入——shared secret 足以冒充本应用签名，不能进 git，也不该以可被 `strings` 读出的形式留在二进制里。
+
+**判定规则**（Last.fm 官方）：曲目 > 30 秒，且播放满 `min(时长/2, 240s)`；时间戳取**开播时刻**。一条播放只记一次。
+
+**队列**：持久化 JSON，按 `(曲目 ID, 开播时间)` 幂等去重，每批最多 50 条。超过 14 天的记录直接丢弃（Last.fm 拒收，未文档化但已实测）。
 
 ## 状态与持久化
 
 | 数据 | 位置 | 生命周期 |
 | --- | --- | --- |
 | QQ 音乐会话 | `~/Library/Application Support/bbMusic/qq-session/`（sidecar 加密写入） | 跨重启；过期靠 `/login/refresh` 续期 |
-| Last.fm 会话密钥 | Keychain | 跨重启 |
+| Last.fm API key / secret / 会话密钥 | Keychain | 跨重启；退出登录只清会话，保留应用身份 |
 | 待提交 scrobble 队列 | 应用状态 JSON | 跨重启；14 天裁剪 |
 | 播放队列与当前曲目 | 应用状态 JSON | 跨重启（恢复上次队列，不自动续播） |
 | 窗口尺寸与导航位置 | 系统窗口状态 | 系统管理 |

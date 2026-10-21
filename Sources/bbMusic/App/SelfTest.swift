@@ -97,6 +97,44 @@ struct SelfTest {
             ) + " notice=\(model.player.notice ?? "none")"
         ))
 
+        // 7. Last.fm: credential storage, auth state, and the scrobble rule engine.
+        let credentials = Keychain.loadLastFMCredentials()
+        steps.append(Step(
+            name: "lfm-creds",
+            ok: credentials != nil,
+            detail: credentials == nil
+                ? "no credentials in Keychain"
+                : "api key in Keychain, session \(credentials?.sessionKey == nil ? "absent" : "present")"
+        ))
+        steps.append(Step(
+            name: "lfm-auth",
+            ok: model.scrobbler.connection.isConnected,
+            detail: model.scrobbler.connection.label
+        ))
+
+        // The rule engine must refuse anything Last.fm itself would refuse. Exercised as pure
+        // decisions: submitting real scrobbles here would write fake plays into the user's history.
+        let cases: [(String, TimeInterval, TimeInterval, Bool, Bool)] = [
+            ("223s track, played 112s", 223, 112, false, true),
+            ("223s track, played 111s", 223, 111, false, false),
+            ("600s track, played 240s", 600, 240, false, true),
+            ("600s track, played 239s", 600, 239, false, false),
+            ("20s track, played fully", 20, 20, false, false),
+            ("223s preview, played fully", 223, 223, true, false),
+        ]
+        var ruleFailures: [String] = []
+        for (name, duration, elapsed, preview, expected) in cases {
+            let got = Scrobbler.wouldScrobble(duration: duration, elapsed: elapsed, isPreview: preview)
+            if got != expected { ruleFailures.append("\(name) -> \(got)") }
+        }
+        steps.append(Step(
+            name: "lfm-rules",
+            ok: ruleFailures.isEmpty,
+            detail: ruleFailures.isEmpty
+                ? "\(cases.count) rule cases correct"
+                : "wrong: \(ruleFailures.joined(separator: "; "))"
+        ))
+
         return finish(steps)
     }
 
