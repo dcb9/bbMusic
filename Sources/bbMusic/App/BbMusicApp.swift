@@ -34,7 +34,16 @@ struct BbMusicApp: App {
             SettingsView(model: model)
         }
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            // With `replacing: .newItem` there is no way to get the window back if it is ever
+            // closed or fails to restore, leaving a running app with no UI.
+            CommandGroup(after: .newItem) {
+                Button("显示主窗口") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first { $0.identifier?.rawValue.contains("main") == true }?
+                        .makeKeyAndOrderFront(nil)
+                }
+                .keyboardShortcut("0", modifiers: [.command])
+            }
             CommandMenu("播放") {
                 Button("播放 / 暂停") { model.player.togglePlayPause() }
                     .keyboardShortcut(.space, modifiers: [])
