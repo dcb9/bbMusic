@@ -199,6 +199,98 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return LRCParser.parse(lyric: raw, translation: translation)
     }
 
+    // MARK: - Library
+
+    func likedSongs() async throws -> [Track] {
+        var collected: [Track] = []
+        var offset = 0
+        // Paged: the endpoint returns a window, not the whole library.
+        while collected.count < 2000 {
+            let data = try await get("/user/liked-songs", query: [
+                .init(name: "offset", value: String(offset)),
+                .init(name: "limit", value: "100"),
+            ])
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let songs = root["songs"] as? [[String: Any]],
+                  !songs.isEmpty
+            else { break }
+            let page = songs.compactMap(Self.track(from:))
+            collected.append(contentsOf: page)
+            if songs.count < 100 { break }
+            offset += songs.count
+        }
+        return collected
+    }
+
+    func playlists() async throws -> [Playlist] {
+        let data = try await get("/user/playlist", query: [])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = root["playlist"] as? [[String: Any]]
+        else { return [] }
+        return raw.compactMap { entry in
+            guard let tid = entry["tid"] as? Int else { return nil }
+            let dirId = entry["dirId"] as? Int
+            let name = (entry["dirName"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+            let count = (entry["songNum"] as? Int) ?? 0
+            // dirId 201 is QQ Music's fixed "我喜欢的音乐" folder; some accounts leave dirName empty.
+            let isLiked = dirId == 201 || name == "我喜欢"
+            let resolvedName = name.isEmpty ? (isLiked ? "我喜欢" : "未命名歌单") : name
+            return Playlist(id: String(tid), name: resolvedName, trackCount: count, isLikedSongs: isLiked)
+        }
+        // 我喜欢 first, then the user's own order.
+        .sorted { lhs, rhs in
+            if lhs.isLikedSongs != rhs.isLikedSongs { return lhs.isLikedSongs }
+            return false
+        }
+    }
+
+    func tracks(in playlist: Playlist) async throws -> [Track] {
+        if playlist.isLikedSongs {
+            return try await likedSongs()
+        }
+        let data = try await get("/user/playlist-detail", query: [
+            .init(name: "tid", value: playlist.id),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let songs = root["songs"] as? [[String: Any]]
+        else { return [] }
+        return songs.compactMap(Self.track(from:))
+    }
+
+    func albums() async throws -> [Album] {
+        var collected: [Album] = []
+        var offset = 0
+        while collected.count < 500 {
+            let data = try await get("/user/albums", query: [
+                .init(name: "offset", value: String(offset)),
+                .init(name: "limit", value: "50"),
+            ])
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let raw = root["albums"] as? [[String: Any]],
+                  !raw.isEmpty
+            else { break }
+            collected.append(contentsOf: raw.compactMap(Self.album(from:)))
+            if raw.count < 50 { break }
+            offset += raw.count
+        }
+        return collected
+    }
+
+    private static func album(from entry: [String: Any]) -> Album? {
+        guard let albumMid = entry["albummid"] as? String, !albumMid.isEmpty else { return nil }
+        let name = (entry["albumname"] as? String) ?? "未知专辑"
+        let singers = (entry["singer"] as? [[String: Any]]) ?? []
+        let artist = singers.compactMap { $0["name"] as? String }.joined(separator: " / ")
+        let count = (entry["songnum"] as? Int) ?? (entry["song_num"] as? Int) ?? 0
+        return Album(
+            id: albumMid,
+            name: name,
+            artist: artist.isEmpty ? ((entry["singername"] as? String) ?? "未知艺术家") : artist,
+            trackCount: count,
+            artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(albumMid).jpg")
+        )
+    }
+
     // MARK: - Response mapping
 
     private static func track(from item: [String: Any]) -> Track? {

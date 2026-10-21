@@ -29,6 +29,10 @@ struct BbMusicApp: App {
             }
         }
         .defaultSize(width: 1000, height: 640)
+
+        Settings {
+            SettingsView(model: model)
+        }
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("播放") {

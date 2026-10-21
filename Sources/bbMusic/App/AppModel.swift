@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
         case charts
         case liked
         case playlists
+        case albums
 
         var id: String { rawValue }
 
@@ -20,6 +21,7 @@ final class AppModel: ObservableObject {
             case .charts: return "排行榜"
             case .liked: return "我喜欢"
             case .playlists: return "歌单"
+            case .albums: return "专辑"
             }
         }
 
@@ -30,6 +32,7 @@ final class AppModel: ObservableObject {
             case .charts: return "list.number"
             case .liked: return "heart"
             case .playlists: return "music.note.list"
+            case .albums: return "square.stack"
             }
         }
     }
@@ -49,6 +52,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var sidecarState: SidecarManager.State = .idle
     @Published var showLoginSheet = false
     @Published var showLastFMPanel = false
+    /// Library contents. Loaded once the account is connected.
+    @Published private(set) var playlists: [Playlist] = []
+    @Published private(set) var albums: [Album] = []
+    @Published private(set) var libraryTracks: [Track] = []
+    @Published private(set) var selectedPlaylist: Playlist?
+    @Published private(set) var selectedAlbum: Album?
+    @Published private(set) var isLoadingLibrary = false
+    @Published private(set) var libraryError: String?
+    /// Row selection is separate from playback: clicking selects, double-clicking plays.
+    @Published var selectedTrackID: String?
 
     let player: Player
     let scrobbler: Scrobbler
@@ -70,7 +83,8 @@ final class AppModel: ObservableObject {
         )
         self.player = Player(platform: platform)
         self.scrobbler = Scrobbler(
-            storeURL: support.appendingPathComponent("scrobble-queue.json")
+            storeURL: support.appendingPathComponent("scrobble-queue.json"),
+            credentialsURL: LastFMCredentialsStore.fileURL(supportDirectory: support)
         )
 
         // Playback drives the scrobbler; the scrobbler never drives playback.
@@ -107,6 +121,21 @@ final class AppModel: ObservableObject {
         sidecar.stop()
     }
 
+    /// Shown in settings so the credential file is discoverable.
+    var lastFMCredentialsPath: String {
+        LastFMCredentialsStore.fileURL(supportDirectory: Self.supportDirectory()).path
+    }
+
+    func signOutQQMusic() async {
+        try? await platform.signOut()
+        connection = .disconnected
+        playlists = []
+        albums = []
+        libraryTracks = []
+        selectedPlaylist = nil
+        selectedAlbum = nil
+    }
+
     // MARK: - Connection
 
     func refreshConnection() async {
@@ -116,6 +145,88 @@ final class AppModel: ObservableObject {
         }
         let state = await platform.connectionState()
         connection = state
+        if state.isConnected {
+            await loadLibrary()
+        } else {
+            playlists = []
+            albums = []
+        }
+    }
+
+    // MARK: - Library
+
+    func loadLibrary() async {
+        isLoadingLibrary = true
+        libraryError = nil
+        defer { isLoadingLibrary = false }
+        do {
+            async let lists = platform.playlists()
+            async let saved = platform.albums()
+            playlists = try await lists
+            albums = try await saved
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    /// Loads a section's contents. Errors are reported in `libraryError` rather than thrown, so a
+    /// pane can show what went wrong without the app appearing broken.
+    func selectSection(_ section: Section) async {
+        self.section = section
+        pane = .list
+        selectedPlaylist = nil
+        selectedAlbum = nil
+        libraryError = nil
+        guard connection.isConnected else {
+            libraryTracks = []
+            return
+        }
+        switch section {
+        case .liked:
+            await loadTracks { try await platform.likedSongs() }
+        case .playlists:
+            libraryTracks = []
+        case .albums:
+            libraryTracks = []
+        default:
+            libraryTracks = []
+        }
+    }
+
+    func open(_ playlist: Playlist) async {
+        section = .playlists
+        pane = .list
+        selectedAlbum = nil
+        selectedPlaylist = playlist
+        await loadTracks { try await platform.tracks(in: playlist) }
+    }
+
+    func open(_ album: Album) async {
+        section = .albums
+        pane = .list
+        selectedPlaylist = nil
+        selectedAlbum = album
+        await loadTracks { try await platform.search("\(album.name) \(album.artist)") }
+    }
+
+    /// Returns from a playlist/album detail to its list.
+    func closeDetail() {
+        selectedPlaylist = nil
+        selectedAlbum = nil
+        libraryTracks = []
+        libraryError = nil
+    }
+
+    private func loadTracks(_ fetch: () async throws -> [Track]) async {
+        isLoadingLibrary = true
+        libraryError = nil
+        defer { isLoadingLibrary = false }
+        do {
+            libraryTracks = try await fetch()
+        } catch {
+            libraryTracks = []
+            libraryError = error.localizedDescription
+        }
     }
 
     // MARK: - Search
@@ -151,17 +262,15 @@ final class AppModel: ObservableObject {
         case .search:
             return nil
         case .daily:
-            return "每日推荐还在接入中。这一轮先跑通搜索与播放。"
+            return "每日推荐还在接入中。"
         case .charts:
-            return "排行榜还在接入中。这一轮先跑通搜索与播放。"
+            return "排行榜还在接入中。"
         case .liked:
-            return connection.isConnected
-                ? "「我喜欢」还在接入中。这一轮先跑通搜索与播放。"
-                : "需要先登录 QQ 音乐才能读取「我喜欢」。"
+            return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取「我喜欢」。"
         case .playlists:
-            return connection.isConnected
-                ? "歌单列表还在接入中。这一轮先跑通搜索与播放。"
-                : "需要先登录 QQ 音乐才能读取歌单。"
+            return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取歌单。"
+        case .albums:
+            return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取收藏的专辑。"
         }
     }
 

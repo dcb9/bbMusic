@@ -48,6 +48,8 @@ final class Scrobbler: ObservableObject {
     private var pending: [ScrobbleRecord] = []
     private var inFlight = false
     private let storeURL: URL
+    /// Credentials live in a local file, not the Keychain — see `LastFMCredentialsStore`.
+    private let credentialsURL: URL
 
     // MARK: - Current play tracking
 
@@ -57,8 +59,9 @@ final class Scrobbler: ObservableObject {
     private var currentTrack: Track?
     private var didCountCurrentPlay = false
 
-    init(storeURL: URL) {
+    init(storeURL: URL, credentialsURL: URL) {
         self.storeURL = storeURL
+        self.credentialsURL = credentialsURL
         loadQueue()
     }
 
@@ -69,7 +72,7 @@ final class Scrobbler: ObservableObject {
     /// Nothing is seeded from source on purpose — see `Keychain` for why the shared secret must not
     /// live in the repository.
     func bootstrap() {
-        guard let credentials = Keychain.loadLastFMCredentials() else {
+        guard let credentials = LastFMCredentialsStore.load(from: credentialsURL) else {
             connection = .noCredentials
             return
         }
@@ -94,10 +97,9 @@ final class Scrobbler: ObservableObject {
         connection = .authorizing
         do {
             let token = try await client.requestToken()
-            guard let url = LastFMClient.authorizationURL(
-                apiKey: Keychain.loadLastFMCredentials()?.apiKey ?? "",
-                token: token
-            ) else {
+            guard let apiKey = LastFMCredentialsStore.load(from: credentialsURL)?.apiKey,
+                  let url = LastFMClient.authorizationURL(apiKey: apiKey, token: token)
+            else {
                 connection = .failed("无法构造授权地址")
                 return
             }
@@ -108,13 +110,12 @@ final class Scrobbler: ObservableObject {
                 try await Task.sleep(nanoseconds: 2_000_000_000)
                 do {
                     let session = try await client.createSession(token: token)
-                    Keychain.saveSession(key: session.sessionKey, username: session.username)
-                    self.client = LastFMClient(credentials: LastFMClient.Credentials(
-                        apiKey: Keychain.loadLastFMCredentials()?.apiKey ?? "",
-                        sharedSecret: Keychain.loadLastFMCredentials()?.sharedSecret ?? "",
-                        sessionKey: session.sessionKey,
-                        username: session.username
-                    ))
+                    var updated = LastFMCredentialsStore.load(from: credentialsURL)
+                        ?? LastFMClient.Credentials(apiKey: "", sharedSecret: "", sessionKey: nil, username: nil)
+                    updated.sessionKey = session.sessionKey
+                    updated.username = session.username
+                    LastFMCredentialsStore.save(updated, to: credentialsURL)
+                    self.client = LastFMClient(credentials: updated)
                     connection = .connected(username: session.username)
                     await flushQueue()
                     return
@@ -129,9 +130,11 @@ final class Scrobbler: ObservableObject {
     }
 
     func signOut() {
-        Keychain.clearSession()
-        if let credentials = Keychain.loadLastFMCredentials() {
+        LastFMCredentialsStore.clearSession(at: credentialsURL)
+        if let credentials = LastFMCredentialsStore.load(from: credentialsURL) {
             client = LastFMClient(credentials: credentials)
+        } else {
+            client = nil
         }
         connection = .disconnected
     }

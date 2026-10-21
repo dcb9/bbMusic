@@ -65,7 +65,8 @@ flowchart LR
 
 1. **回环绑定 + 动态端口。** 上游包在导入时就 `app.listen(port)`，且不指定 host——即绑定所有网卡（实测为 `::`）。本项目用自带的 `wrapper.js` 作为 sidecar 入口：设 `NODE_ENV=test` 让上游跳过自己的 `listen()`（此时它导出的 `server` 为 `null`），再对默认导出的 Koa app 执行 `listen(0, '127.0.0.1')`，得到回环 + 系统分配的空闲端口，并向 stdout 打印一行 `BBMUSIC_PORT <n>`。主进程读这一行拿端口，因此不存在端口冲突，局域网也无法访问该服务。
    两个实现约束：上游在导入时用 zod 校验 `PORT > 0` 且校验失败即退出，所以**不能**传 `PORT=0`（由 wrapper 自己绑 0，并清掉继承来的 `0`）；`NODE_ENV` 必须在 `require` 之前赋值，上游在导入时读取它。
-2. **会话存活靠文件，不靠进程。** sidecar 以 `QQ_SESSION_SECRET` + `QQ_AUTH_SESSION_PATH`（指向 `~/Library/Application Support/bbMusic/qq-session/`）启动，登录态加密落盘。sidecar 崩溃重启后不需要重新扫码。
+2. **会话存活靠文件，不靠进程。** sidecar 以 `QQ_SESSION_SECRET` + `QQ_AUTH_SESSION_PATH`（指向 `~/Library/Application Support/bbMusic/`）启动，登录态加密落盘。sidecar 崩溃重启后不需要重新扫码。
+   **两个都必须做，缺任一个登录就是假的**：上游被 `require` 时**不会**自己安装持久化仓库，必须由宿主显式调用 `configureAuthSessionRepository(createConfiguredAuthSessionRepository(env))`，否则会话仓库留在内存、恢复 0 条，所有需登录的接口回 401；同时扫码 `803` 时上游通过 `Set-Cookie: qqmusic_session=<token>` 下发会话令牌，无 cookie 存储的 `URLSession` 会静默丢弃它，主进程必须从响应头取出、落盘（0600）并在每次请求带上 `X-QQ-Session`。
 3. **崩溃恢复。** 主进程持有子进程句柄；非正常退出时按指数退避重启（1s / 2s / 5s，连续 3 次失败则向界面报错并提供「重试」），重启期间界面显示「服务未就绪」而不是空白列表。
 
 **Last.fm 不经过 sidecar**：只有 4 个端点，直接在主进程用 `URLSession` 调用，省一个进程的复杂度。
@@ -124,8 +125,9 @@ flowchart LR
 
 | 数据 | 位置 | 生命周期 |
 | --- | --- | --- |
-| QQ 音乐会话 | `~/Library/Application Support/bbMusic/qq-session/`（sidecar 加密写入） | 跨重启；过期靠 `/login/refresh` 续期 |
-| Last.fm API key / secret / 会话密钥 | Keychain | 跨重启；退出登录只清会话，保留应用身份 |
+| QQ 音乐凭证 | `~/Library/Application Support/bbMusic/qq-session.json`（sidecar 加密写入，0600） | 跨重启；过期靠 `/login/refresh` 续期 |
+| QQ 音乐会话令牌 | `~/Library/Application Support/bbMusic/qq-session-token`（0600） | 跨重启；随每次请求以 `X-QQ-Session` 发送 |
+| Last.fm API key / secret / 会话密钥 | `lastfm.json`（0600，`.gitignore`） | 跨重启；退出登录只清会话，保留应用身份 |
 | 待提交 scrobble 队列 | 应用状态 JSON | 跨重启；14 天裁剪 |
 | 播放队列与当前曲目 | 应用状态 JSON | 跨重启（恢复上次队列，不自动续播） |
 | 窗口尺寸与导航位置 | 系统窗口状态 | 系统管理 |
@@ -136,6 +138,10 @@ flowchart LR
 - **Node 运行时随包分发**：`Contents/Resources/node/bin/node`（arm64）+ `Contents/Resources/qq-api/`（打包后的 sidecar 与 `node_modules`）。用户无需自备 Node。
 - **启动顺序**：应用启动 → 拉起 sidecar → 读到端口后探测 `/login/status` → 已登录则加载侧边栏数据，未登录则引导扫码。
 - **退出顺序**：先停播放、flush 待提交队列，再向 sidecar 发终止信号并等待退出（超时则强杀）。
+
+## 古典音乐展示
+
+QQ 音乐不提供结构化的作曲家/作品号/演奏者字段。`TrackDisplay` 从现有字段**推导**：作品号（`Op.`/`BWV`/`KV`/`Hob.`/`D.`/`RV`/`WoO`/`S.`，含 `No.` 子编号）、演奏者（把合并的歌手字段按 `/ 、 ; &` 拆开）、以及是否古典（作品号、作品体裁词、或多位演奏者+长标题）。判断偏保守：它只影响一行的排布与是否显示两行，绝不影响播放或 scrobble；推不出来的字段保持原样，不凭空补作曲家。
 
 ## 决策记录
 

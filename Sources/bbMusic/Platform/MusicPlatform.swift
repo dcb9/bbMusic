@@ -27,6 +27,17 @@ struct Playlist: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let name: String
     let trackCount: Int
+    /// QQ Music distinguishes "我喜欢的音乐" from ordinary self-built playlists.
+    var isLikedSongs: Bool = false
+}
+
+/// A saved album.
+struct Album: Identifiable, Codable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let artist: String
+    let trackCount: Int
+    var artworkURL: URL?
 }
 
 /// Parsed lyrics: timed lines, each optionally carrying a translation.
@@ -72,6 +83,12 @@ protocol MusicPlatform: AnyObject, Sendable {
     func signOut() async throws
 
     func search(_ query: String) async throws -> [Track]
+    /// Library reads. Each returns an empty list when the platform has nothing to show rather than
+    /// failing, so the UI can render an honest empty state.
+    func likedSongs() async throws -> [Track]
+    func playlists() async throws -> [Playlist]
+    func tracks(in playlist: Playlist) async throws -> [Track]
+    func albums() async throws -> [Album]
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource
     func lyrics(for track: Track) async throws -> Lyrics
 }

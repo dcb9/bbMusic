@@ -97,14 +97,75 @@ struct SelfTest {
             ) + " notice=\(model.player.notice ?? "none")"
         ))
 
+        // 6b. Library reads (require a signed-in account).
+        if model.connection.isConnected {
+            await model.loadLibrary()
+            steps.append(Step(
+                name: "playlists",
+                ok: !model.playlists.isEmpty,
+                detail: "\(model.playlists.count) playlists, first = \(model.playlists.first?.name ?? "-")"
+            ))
+            steps.append(Step(
+                name: "albums",
+                ok: !model.albums.isEmpty,
+                detail: "\(model.albums.count) albums, first = \(model.albums.first?.name ?? "-")"
+            ))
+            await model.selectSection(.liked)
+            steps.append(Step(
+                name: "liked-songs",
+                ok: !model.libraryTracks.isEmpty,
+                detail: "\(model.libraryTracks.count) tracks, first = \(model.libraryTracks.first?.title ?? "-")"
+            ))
+            // Playlist detail through the same path the UI uses.
+            if let playlist = model.playlists.first(where: { !$0.isLikedSongs }) {
+                await model.open(playlist)
+                steps.append(Step(
+                    name: "playlist-detail",
+                    ok: !model.libraryTracks.isEmpty,
+                    detail: "\(playlist.name): \(model.libraryTracks.count) tracks"
+                ))
+                model.closeDetail()
+            }
+        }
+
+        // 6c. Classical-friendly display derivation.
+        let classicalSamples: [(String, String, String, String?, Bool)] = [
+            ("Nocturne in E-flat major, Op. 9 No. 2", "Arthur Rubinstein", "Chopin: Nocturnes", "Op. 9 No. 2", true),
+            ("Prelude and Fugue in C major, BWV 846", "Glenn Gould", "Bach: WTC", "BWV 846", true),
+            ("布格缪勒练习曲 阿拉伯风格曲 Op.100 No.2", "钢琴", "钢琴曲", "Op.100 No.2", true),
+            ("Symphony No. 5 in C minor, Op. 67 - I. Allegro", "Berliner Philharmoniker / Herbert von Karajan", "Beethoven", "Op. 67", true),
+            ("晴天", "周杰伦", "叶惠美", nil, false),
+            ("I'll Believe In Anything", "Sunset Rollercoaster", "Villa", nil, false),
+        ]
+        var classicalFailures: [String] = []
+        for (title, artist, album, expectedCatalogue, expectedClassical) in classicalSamples {
+            let track = Track(id: title, title: title, artist: artist, album: album,
+                              duration: 200, artworkURL: nil, isPlayable: true)
+            let info = TrackDisplay.info(for: track)
+            if info.catalogue != expectedCatalogue { classicalFailures.append("\(title): catalogue \(info.catalogue ?? "nil")") }
+            if info.isClassical != expectedClassical { classicalFailures.append("\(title): classical \(info.isClassical)") }
+        }
+        steps.append(Step(
+            name: "classical",
+            ok: classicalFailures.isEmpty,
+            detail: classicalFailures.isEmpty
+                ? "\(classicalSamples.count) samples correct"
+                : classicalFailures.joined(separator: "; ")
+        ))
+
         // 7. Last.fm: credential storage, auth state, and the scrobble rule engine.
-        let credentials = Keychain.loadLastFMCredentials()
+        let credentialsFile = LastFMCredentialsStore.fileURL(
+            supportDirectory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("bbMusic", isDirectory: true)
+        )
+        let credentials = LastFMCredentialsStore.load(from: credentialsFile)
+        let mode = (try? FileManager.default.attributesOfItem(atPath: credentialsFile.path)[.posixPermissions] as? Int) ?? nil
         steps.append(Step(
             name: "lfm-creds",
             ok: credentials != nil,
             detail: credentials == nil
-                ? "no credentials in Keychain"
-                : "api key in Keychain, session \(credentials?.sessionKey == nil ? "absent" : "present")"
+                ? "no credentials file at \(credentialsFile.lastPathComponent)"
+                : "file mode \(mode.map { String($0, radix: 8) } ?? "?"), session \(credentials?.sessionKey == nil ? "absent" : "present")"
         ))
         steps.append(Step(
             name: "lfm-auth",

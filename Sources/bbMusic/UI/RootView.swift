@@ -10,7 +10,7 @@ struct RootView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 SidebarView(model: model, player: player)
-                    .frame(width: 200)
+                    .frame(width: 210)
                 Divider()
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -18,7 +18,7 @@ struct RootView: View {
             Divider()
             PlayerBarView(model: model, player: player)
         }
-        .frame(minWidth: 780, minHeight: 480)
+        .frame(minWidth: 820, minHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -40,8 +40,12 @@ struct RootView: View {
             ) {
                 model.showLoginSheet = true
             }
+        } else if model.section == .playlists && model.selectedPlaylist == nil {
+            PlaylistsPane(model: model)
+        } else if model.section == .albums && model.selectedAlbum == nil {
+            AlbumsPane(model: model)
         } else {
-            SearchPane(model: model, player: player)
+            TracksPane(model: model, player: player)
         }
     }
 
@@ -67,29 +71,18 @@ private struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "music.note")
-                    .foregroundStyle(.tint)
-                Text("QQ 音乐")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text(model.connection.label)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-
+            // No platform banner: the account state belongs at the bottom, next to the other one.
             section("浏览", items: [.search, .daily, .charts])
-            section("我的音乐", items: [.liked, .playlists])
+            section("我的音乐", items: [.liked, .playlists, .albums])
+
+            if model.connection.isConnected, !model.playlists.isEmpty, model.section == .playlists {
+                playlistList
+            }
 
             Spacer()
 
             VStack(spacing: 0) {
                 Divider()
-                // Two account rows, same shape: the platform, then the scrobbler.
                 statusRow(
                     label: model.connection.isConnected
                         ? "QQ 音乐 · \(model.connection.label)"
@@ -109,6 +102,37 @@ private struct SidebarView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+    }
+
+    private var playlistList: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(model.playlists) { playlist in
+                Button {
+                    Task { await model.open(playlist) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: playlist.isLikedSongs ? "heart" : "music.note.list")
+                            .font(.system(size: 10))
+                            .frame(width: 14)
+                            .foregroundStyle(model.selectedPlaylist?.id == playlist.id ? Color.accentColor : .secondary)
+                        Text(playlist.name)
+                            .font(.system(size: 11.5, weight: model.selectedPlaylist?.id == playlist.id ? .semibold : .regular))
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(model.selectedPlaylist?.id == playlist.id ? Color.primary.opacity(0.08) : .clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 5)
+            }
+        }
+        .padding(.top, 2)
     }
 
     private func statusRow(label: String, connected: Bool, action: @escaping () -> Void) -> some View {
@@ -141,8 +165,7 @@ private struct SidebarView: View {
 
             ForEach(items) { item in
                 Button {
-                    model.section = item
-                    model.pane = .list
+                    Task { await model.selectSection(item) }
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: item.symbol)
@@ -195,7 +218,7 @@ private struct SearchPane: View {
                     symbol: "magnifyingglass"
                 )
             } else {
-                TrackList(tracks: model.results, player: player)
+                TrackList(tracks: model.results, player: player, selectedID: $model.selectedTrackID)
             }
         }
         .onAppear { searchFocused = true }
@@ -248,11 +271,213 @@ private struct SearchPane: View {
     }
 }
 
+// MARK: - Library panes
+
+private struct TracksPane: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var player: Player
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if model.selectedPlaylist != nil || model.selectedAlbum != nil {
+                    Button {
+                        model.closeDetail()
+                    } label: {
+                        Label("返回", systemImage: "chevron.left")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                if !model.libraryTracks.isEmpty {
+                    Text("\(model.libraryTracks.count) 首")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            Divider()
+
+            if let notice = player.notice {
+                NoticeBar(text: notice)
+            }
+
+            if model.isLoadingLibrary {
+                StatusPane(title: "载入中…", message: nil, symbol: nil)
+            } else if let error = model.libraryError {
+                StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
+            } else if model.libraryTracks.isEmpty {
+                StatusPane(
+                    title: emptyTitle,
+                    message: emptyMessage,
+                    symbol: "music.note.list"
+                )
+            } else {
+                TrackList(tracks: model.libraryTracks, player: player, selectedID: $model.selectedTrackID)
+            }
+        }
+    }
+
+    private var title: String {
+        if let playlist = model.selectedPlaylist { return playlist.name }
+        if let album = model.selectedAlbum { return album.name }
+        return model.section.title
+    }
+
+    private var emptyTitle: String {
+        model.section == .liked ? "「我喜欢」里还没有歌曲" : "这里是空的"
+    }
+
+    private var emptyMessage: String {
+        model.section == .liked
+            ? "在 QQ 音乐里点红心的歌曲会出现在这里。"
+            : "换一个歌单看看，或者检查登录状态。"
+    }
+}
+
+private struct PlaylistsPane: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("歌单").font(.system(size: 13, weight: .semibold))
+                if !model.playlists.isEmpty {
+                    Text("\(model.playlists.count) 个").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            Divider()
+
+            if model.isLoadingLibrary {
+                StatusPane(title: "载入中…", message: nil, symbol: nil)
+            } else if let error = model.libraryError {
+                StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
+            } else if model.playlists.isEmpty {
+                StatusPane(title: "还没有歌单", message: "在 QQ 音乐里创建或收藏歌单后会出现在这里。", symbol: "music.note.list")
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.playlists) { playlist in
+                            Button {
+                                Task { await model.open(playlist) }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: playlist.isLikedSongs ? "heart.fill" : "music.note.list")
+                                        .font(.system(size: 12))
+                                        .frame(width: 18)
+                                        .foregroundStyle(playlist.isLikedSongs ? Color.accentColor : .secondary)
+                                    Text(playlist.name)
+                                        .font(.system(size: 12.5))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("\(playlist.trackCount) 首")
+                                        .font(.system(size: 11).monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(height: 30)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            Divider().opacity(0.35)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AlbumsPane: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("收藏的专辑").font(.system(size: 13, weight: .semibold))
+                if !model.albums.isEmpty {
+                    Text("\(model.albums.count) 张").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            Divider()
+
+            if model.isLoadingLibrary {
+                StatusPane(title: "载入中…", message: nil, symbol: nil)
+            } else if let error = model.libraryError {
+                StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
+            } else if model.albums.isEmpty {
+                StatusPane(title: "还没有收藏的专辑", message: "在 QQ 音乐里收藏专辑后会出现在这里。", symbol: "square.stack")
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.albums) { album in
+                            Button {
+                                Task { await model.open(album) }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    AsyncImage(url: album.artworkURL) { phase in
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(Color.primary.opacity(0.08))
+                                            if let image = phase.image {
+                                                image.resizable().scaledToFill()
+                                            } else {
+                                                Image(systemName: "square.stack")
+                                                    .font(.system(size: 11))
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 30, height: 30)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(album.name)
+                                            .font(.system(size: 12.5))
+                                            .lineLimit(1)
+                                        Text(album.artist)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    if album.trackCount > 0 {
+                                        Text("\(album.trackCount) 首")
+                                            .font(.system(size: 11).monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(height: 44)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            Divider().opacity(0.35)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Track list
 
 private struct TrackList: View {
     let tracks: [Track]
     @ObservedObject var player: Player
+    @Binding var selectedID: String?
 
     var body: some View {
         ScrollView {
@@ -262,10 +487,16 @@ private struct TrackList: View {
                         index: index,
                         track: track,
                         isCurrent: player.currentTrack?.id == track.id,
-                        isPlaying: player.currentTrack?.id == track.id && player.isPlaying
+                        isPlaying: player.currentTrack?.id == track.id && player.isPlaying,
+                        isSelected: selectedID == track.id
                     )
-                    .onTapGesture {
+                    // Single click selects; playing is a deliberate double click, as in Finder.
+                    .onTapGesture(count: 2) {
+                        selectedID = track.id
                         player.play(tracks: tracks, startingAt: index)
+                    }
+                    .onTapGesture {
+                        selectedID = track.id
                     }
                     Divider().opacity(0.35)
                 }
@@ -279,8 +510,10 @@ private struct TrackRow: View {
     let track: Track
     let isCurrent: Bool
     let isPlaying: Bool
+    let isSelected: Bool
 
     var body: some View {
+        let info = TrackDisplay.info(for: track)
         HStack(spacing: 10) {
             Group {
                 if isCurrent {
@@ -295,14 +528,29 @@ private struct TrackRow: View {
             }
             .frame(width: 22, alignment: .trailing)
 
-            Text(track.title)
-                .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.title)
+                    .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
+                    .lineLimit(1)
+                // Classical recordings lead with performers; pop leads with the album.
+                if info.isClassical {
+                    Text(TrackDisplay.secondaryLine(for: track))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(track.artist)
-                .font(.system(size: 12))
+                .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 130, alignment: .leading)
+
+            Text(track.album)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .frame(width: 150, alignment: .leading)
 
@@ -312,9 +560,15 @@ private struct TrackRow: View {
                 .frame(width: 44, alignment: .trailing)
         }
         .padding(.horizontal, 14)
-        .frame(height: 29)
-        .background(isCurrent ? Color.primary.opacity(0.06) : .clear)
+        .frame(height: info.isClassical ? 36 : 29)
+        .background(rowBackground)
         .contentShape(Rectangle())
+    }
+
+    private var rowBackground: Color {
+        if isSelected { return Color.accentColor.opacity(0.14) }
+        if isCurrent { return Color.primary.opacity(0.06) }
+        return .clear
     }
 }
 
@@ -338,7 +592,7 @@ private struct PlayerBarView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: 170, alignment: .leading)
 
             transport
 
