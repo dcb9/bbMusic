@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     @Published var filterAlbum: String?
     /// Progress while paging through every result page.
     @Published private(set) var searchProgress: (loaded: Int, total: Int)?
+    @Published private(set) var isLoadingMore = false
     /// Song results, kept for code paths that only deal in tracks (player, queue, MCP).
     var results: [Track] { searchResults.songs }
 
@@ -306,30 +307,64 @@ final class AppModel: ObservableObject {
             searchProgress = nil
         }
         do {
-            var merged = try await platform.search(trimmed, kind: searchKind, page: 1)
-            searchProgress = (merged.count, merged.totalAvailable)
-            var page = merged.nextPage
-            // Cap the walk so a huge result set cannot turn one search into hundreds of requests.
-            var fetched = 1
-            while let next = page, fetched < Self.maxSearchPages {
-                var more = try await platform.search(trimmed, kind: searchKind, page: next)
-                merged.songs += more.songs
-                merged.albums += more.albums
-                merged.playlists += more.playlists
-                merged.artists += more.artists
-                page = more.nextPage
-                fetched += 1
-                searchProgress = (merged.count, merged.totalAvailable)
-            }
-            merged.nextPage = nil
+            // One batch = 100 results. The upstream only ever returns 20 per request, so a batch is
+            // five requests; the next batch waits for the user to ask for it.
+            let merged = try await fetchBatch(trimmed, kind: searchKind, fromPage: 1, into: SearchResults(kind: searchKind))
             searchResults = merged
+            searchProgress = (merged.count, merged.totalAvailable)
         } catch {
             searchError = error.localizedDescription
         }
     }
 
-    /// 10 pages × 50 = 500 results, enough to filter meaningfully without hammering the upstream.
-    static let maxSearchPages = 10
+    /// Loads the next batch of results. No-op when everything has already been fetched.
+    func loadMoreResults() async {
+        guard let next = searchResults.nextPage, !isLoadingMore else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let merged = try await fetchBatch(trimmed, kind: searchKind, fromPage: next, into: searchResults)
+            searchResults = merged
+            searchProgress = (merged.count, merged.totalAvailable)
+        } catch {
+            searchError = error.localizedDescription
+        }
+    }
+
+    /// Pages the upstream until one batch (`searchBatchSize`) is collected or results run out.
+    private func fetchBatch(
+        _ keyword: String,
+        kind: SearchKind,
+        fromPage: Int,
+        into existing: SearchResults
+    ) async throws -> SearchResults {
+        var merged = existing
+        var page: Int? = fromPage
+        var collected = 0
+        while let current = page, collected < Self.searchBatchSize {
+            let chunk = try await platform.search(keyword, kind: kind, page: current)
+            merged.songs += chunk.songs
+            merged.albums += chunk.albums
+            merged.playlists += chunk.playlists
+            merged.artists += chunk.artists
+            merged.totalAvailable = chunk.totalAvailable
+            collected += chunk.count
+            page = chunk.nextPage
+            searchProgress = (merged.count, merged.totalAvailable)
+            // An empty page means the upstream has nothing more regardless of what it claims.
+            if chunk.isEmpty { page = nil }
+        }
+        merged.nextPage = page
+        return merged
+    }
+
+    /// Results per batch: 100, which is five upstream pages.
+    static let searchBatchSize = 100
+
+    /// Whether a "load more" action is available.
+    var canLoadMore: Bool { searchResults.nextPage != nil }
 
     // MARK: - Local filtering
 

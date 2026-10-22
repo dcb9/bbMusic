@@ -256,11 +256,7 @@ private struct SearchPane: View {
 
             Spacer()
 
-            if let progress = model.searchProgress {
-                Text("已取 \(progress.loaded)/\(progress.total)")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            } else if model.hasActiveFilters {
+            if model.hasActiveFilters {
                 Text("\(model.filteredCount) / \(model.searchResults.count) 条")
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(.tertiary)
@@ -303,6 +299,40 @@ private struct SearchPane: View {
 
     @ViewBuilder
     private var results: some View {
+        VStack(spacing: 0) {
+            resultsBody
+            if model.canLoadMore || model.isLoadingMore {
+                loadMoreBar
+            }
+        }
+    }
+
+    /// Manual paging: the user decides when to pull the next batch of 100.
+    private var loadMoreBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) {
+                if model.isLoadingMore {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                    Text("载入中…").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Button("载入更多（\(AppModel.searchBatchSize) 条）") {
+                        Task { await model.loadMoreResults() }
+                    }
+                    .controlSize(.small)
+                    Text("已载入 \(model.searchResults.count) / \(model.searchResults.totalAvailable)")
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var resultsBody: some View {
         switch model.searchKind {
         case .song:
             TrackList(tracks: model.filteredSongs, player: player, selectedID: $model.selectedTrackID)
@@ -313,7 +343,9 @@ private struct SearchPane: View {
                 } label: {
                     MediaCard(
                         title: album.name,
-                        subtitle: album.artist,
+                        // Year first: on a classical catalogue it is often the only thing that
+                        // distinguishes two recordings of the same work.
+                        subtitle: album.year.map { "\($0) · \(album.artist)" } ?? album.artist,
                         artworkURL: album.artworkURL,
                         placeholderSymbol: "square.stack",
                         side: 120
@@ -568,7 +600,7 @@ private struct AlbumsPane: View {
                     } label: {
                         MediaCard(
                             title: album.name,
-                            subtitle: album.artist,
+                            subtitle: album.year.map { "\($0) · \(album.artist)" } ?? album.artist,
                             artworkURL: album.artworkURL,
                             placeholderSymbol: "square.stack",
                             side: 120,

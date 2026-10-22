@@ -262,6 +262,35 @@ struct SelfTest {
             ))
         }
 
+        // 6c3. Batched paging: one batch is 100 results (five upstream pages), and more only
+        // arrives when asked for.
+        if model.connection.isConnected {
+            model.query = "贝多芬"
+            model.searchKind = .song
+            await model.runSearch()
+            let firstBatch = model.searchResults.songs.count
+            let canMore = model.canLoadMore
+            let totalBefore = model.searchResults.songs.count
+            if canMore { await model.loadMoreResults() }
+            let afterMore = model.searchResults.songs.count
+            steps.append(Step(
+                name: "batch-100",
+                ok: firstBatch >= 90 && (!canMore || afterMore > totalBefore),
+                detail: "first batch \(firstBatch), after load-more \(afterMore), total \(model.searchResults.totalAvailable)"
+            ))
+
+            model.query = "贝多芬"
+            model.searchKind = .album
+            await model.runSearch()
+            let years = model.searchResults.albums.compactMap(\.year)
+            steps.append(Step(
+                name: "album-year",
+                ok: !years.isEmpty,
+                detail: "\(years.count)/\(model.searchResults.albums.count) albums have a year"
+            ))
+            model.searchKind = .song
+        }
+
         // 6d. Audio quality: the API must report real files, not a fixed menu.
         if let track = model.results.first {
             let qualities = (try? await model.platform.availableQualities(for: track)) ?? []
