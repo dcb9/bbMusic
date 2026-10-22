@@ -176,6 +176,9 @@ private struct SearchPane: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if model.hasActiveFilters || model.searchResults.totalAvailable > 0 {
+                filterBar
+            }
             Divider()
             if let notice = player.notice {
                 NoticeBar(text: notice)
@@ -199,13 +202,112 @@ private struct SearchPane: View {
         .onAppear { searchFocused = true }
     }
 
+    /// Local filters over the fetched results. Only dimensions the data actually carries appear —
+    /// the QQ Music search response has no label or conductor field, so offering those would mean
+    /// filtering on guesses.
+    @ViewBuilder
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            Text("筛选")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.tertiary)
+
+            if !model.availableYears.isEmpty {
+                filterMenu(
+                    title: model.filterYear.map(String.init) ?? "年份",
+                    isActive: model.filterYear != nil,
+                    options: model.availableYears.map { (String($0), String($0)) },
+                    selection: Binding(
+                        get: { model.filterYear.map(String.init) },
+                        set: { model.filterYear = $0.flatMap(Int.init) }
+                    )
+                )
+            }
+            if !model.availableComposers.isEmpty {
+                filterMenu(
+                    title: model.filterComposer ?? "作曲家",
+                    isActive: model.filterComposer != nil,
+                    options: model.availableComposers.map { ($0, $0) },
+                    selection: $model.filterComposer
+                )
+            }
+            if !model.availablePerformers.isEmpty {
+                filterMenu(
+                    title: model.filterPerformer ?? (model.searchKind == .album ? "乐团" : "演奏者"),
+                    isActive: model.filterPerformer != nil,
+                    options: model.availablePerformers.map { ($0, $0) },
+                    selection: $model.filterPerformer
+                )
+            }
+            if model.searchKind == .song, !model.availableAlbums.isEmpty {
+                filterMenu(
+                    title: model.filterAlbum ?? "专辑",
+                    isActive: model.filterAlbum != nil,
+                    options: model.availableAlbums.map { ($0, $0) },
+                    selection: $model.filterAlbum
+                )
+            }
+            if model.hasActiveFilters {
+                Button("清除") { model.clearFilters() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let progress = model.searchProgress {
+                Text("已取 \(progress.loaded)/\(progress.total)")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            } else if model.hasActiveFilters {
+                Text("\(model.filteredCount) / \(model.searchResults.count) 条")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.03))
+    }
+
+    private func filterMenu(
+        title: String,
+        isActive: Bool,
+        options: [(value: String, label: String)],
+        selection: Binding<String?>
+    ) -> some View {
+        Menu {
+            Button("全部") { selection.wrappedValue = nil }
+            Divider()
+            ForEach(options, id: \.value) { option in
+                Button(option.label) { selection.wrappedValue = option.value }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(title).font(.system(size: 10.5, weight: isActive ? .semibold : .regular))
+                Image(systemName: "chevron.down").font(.system(size: 7))
+            }
+            .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
     @ViewBuilder
     private var results: some View {
         switch model.searchKind {
         case .song:
-            TrackList(tracks: model.searchResults.songs, player: player, selectedID: $model.selectedTrackID)
+            TrackList(tracks: model.filteredSongs, player: player, selectedID: $model.selectedTrackID)
         case .album:
-            CardGrid(items: model.searchResults.albums) { album in
+            CardGrid(items: model.filteredAlbums) { album in
                 Button {
                     Task { await model.openAlbum(album) }
                 } label: {
@@ -675,15 +777,17 @@ private struct TrackRow: View {
             .frame(width: 22, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 1) {
+                // Titles are shown in full: classical titles routinely run past what one line
+                // holds, and truncating them hides the work, the key and the catalogue number.
                 Text(track.title)
                     .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
-                    .lineLimit(1)
-                // Classical recordings lead with performers; pop leads with the album.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
                 if let credit = TrackDisplay.creditLine(for: track, heuristic: info) {
                     Text(credit)
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -691,15 +795,17 @@ private struct TrackRow: View {
             Text(track.artist)
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(width: 130, alignment: .leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 150, alignment: .leading)
 
             if showsAlbum {
                 Text(track.album)
                     .font(.system(size: 11.5))
                     .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .frame(width: 150, alignment: .leading)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 160, alignment: .leading)
             }
 
             Text(track.durationText)
@@ -708,7 +814,8 @@ private struct TrackRow: View {
                 .frame(width: 44, alignment: .trailing)
         }
         .padding(.horizontal, 14)
-        .frame(height: info.isClassical ? 36 : 29)
+        .padding(.vertical, 5)
+        .frame(minHeight: 29)
         .background(rowBackground)
         .contentShape(Rectangle())
     }

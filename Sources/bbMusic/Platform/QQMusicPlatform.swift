@@ -137,17 +137,18 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
     // MARK: - Catalog
 
     func search(_ query: String) async throws -> [Track] {
-        try await search(query, kind: .song).songs
+        try await search(query, kind: .song, page: 1).songs
     }
 
-    func search(_ query: String, kind: SearchKind) async throws -> SearchResults {
+    func search(_ query: String, kind: SearchKind, page: Int = 1) async throws -> SearchResults {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SearchResults(kind: kind) }
+        let pageSize = 50
         let data = try await get("/search", query: [
             .init(name: "keyword", value: trimmed),
             .init(name: "type", value: kind.rawValue),
-            .init(name: "page", value: "1"),
-            .init(name: "limit", value: "50"),
+            .init(name: "page", value: String(page)),
+            .init(name: "limit", value: String(pageSize)),
         ])
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PlatformError("搜索响应不是 JSON")
@@ -160,7 +161,13 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             throw PlatformError("搜索失败（code \(code)）：\(message)")
         }
 
+        let total = (root["total"] as? Int) ?? 0
+        let reportedPage = (root["page"] as? Int) ?? page
         var results = SearchResults(kind: kind)
+        results.totalAvailable = total
+        // `more` is the upstream's own answer; the page arithmetic is a fallback for when it lies.
+        let more = (root["more"] as? Bool) ?? (reportedPage * pageSize < total)
+        results.nextPage = more && !items.isEmpty ? reportedPage + 1 : nil
         switch kind {
         case .song:
             results.songs = items.compactMap(Self.track(from:))
@@ -490,6 +497,21 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         let pay = item["pay"] as? [String: Any]
         let isPlayable = (pay?["pay_play"] as? Int ?? 0) == 0
 
+        // `time_public` is "1990-01-01"; only the year is meaningful for filtering.
+        var year: Int?
+        if let raw = (item["time_public"] as? String) ?? (albumDict?["time_public"] as? String),
+           let value = Int(raw.prefix(4)), value > 1000 {
+            year = value
+        }
+        // Classical results put the composer in `desc` as "作曲: <name>".
+        var composerCredit: String?
+        if let desc = item["desc"] as? String {
+            for prefix in ["作曲:", "作曲："] where desc.hasPrefix(prefix) {
+                let name = desc.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { composerCredit = name }
+            }
+        }
+
         return Track(
             id: mid,
             title: title,
@@ -500,7 +522,9 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             isPlayable: isPlayable,
             composer: nil,
             work: nil,
-            disc: nil
+            disc: nil,
+            year: year,
+            composerCredit: composerCredit
         )
     }
 
@@ -512,12 +536,17 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             ?? ((item["singer"] as? [[String: Any]])?.compactMap { $0["name"] as? String }.joined(separator: " / "))
             ?? "未知艺术家"
         let count = (item["song_num"] as? Int) ?? 0
+        var year: Int?
+        if let raw = item["publish_date"] as? String, let value = Int(raw.prefix(4)), value > 1000 {
+            year = value
+        }
         return Album(
             id: mid,
             name: name,
             artist: artist,
             trackCount: count,
-            artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(mid).jpg")
+            artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(mid).jpg"),
+            year: year
         )
     }
 

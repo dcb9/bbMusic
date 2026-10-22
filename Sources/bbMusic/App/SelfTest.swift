@@ -211,10 +211,10 @@ struct SelfTest {
                 do {
                     // The upstream intermittently answers with an empty page; retry once so a
                     // transient hiccup is not reported as a broken search type.
-                    var results = try await model.platform.search("周杰伦", kind: kind)
+                    var results = try await model.platform.search("周杰伦", kind: kind, page: 1)
                     if results.count == 0 {
                         try? await Task.sleep(nanoseconds: 1_200_000_000)
-                        results = try await model.platform.search("周杰伦", kind: kind)
+                        results = try await model.platform.search("周杰伦", kind: kind, page: 1)
                     }
                     if results.count == 0 { typedFailures.append(kind.label) }
                     typedDetail.append("\(kind.label) \(results.count)")
@@ -229,7 +229,7 @@ struct SelfTest {
             ))
 
             // A playlist found by search must open into real tracks.
-            if let found = try? await model.platform.search("周杰伦", kind: .playlist),
+            if let found = try? await model.platform.search("周杰伦", kind: .playlist, page: 1),
                let playlist = found.playlists.first {
                 let tracks = (try? await model.platform.tracks(inSearchPlaylist: playlist)) ?? []
                 steps.append(Step(
@@ -238,6 +238,28 @@ struct SelfTest {
                     detail: "\(playlist.name): \(tracks.count) tracks"
                 ))
             }
+        }
+
+        // 6c2. Search pagination and local filters.
+        if model.connection.isConnected {
+            let first = try? await model.platform.search("贝多芬", kind: .song, page: 1)
+            let second = try? await model.platform.search("贝多芬", kind: .song, page: 2)
+            let paged = (first?.nextPage != nil) && !(second?.songs.isEmpty ?? true)
+            steps.append(Step(
+                name: "paging",
+                ok: paged,
+                detail: "page1 \(first?.songs.count ?? 0) of \(first?.totalAvailable ?? 0), page2 \(second?.songs.count ?? 0)"
+            ))
+
+            // Filters are only honest if the underlying metadata exists.
+            let songs = first?.songs ?? []
+            let withYear = songs.compactMap(\.year).count
+            let withComposer = songs.compactMap(\.composerCredit).count
+            steps.append(Step(
+                name: "filter-data",
+                ok: withYear > 0,
+                detail: "\(withYear)/\(songs.count) with year, \(withComposer)/\(songs.count) with composer"
+            ))
         }
 
         // 6d. Audio quality: the API must report real files, not a fixed menu.

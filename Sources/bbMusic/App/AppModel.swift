@@ -48,6 +48,13 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var searchResults = SearchResults()
+    /// Local filters applied on top of what the API returned.
+    @Published var filterYear: Int?
+    @Published var filterComposer: String?
+    @Published var filterPerformer: String?
+    @Published var filterAlbum: String?
+    /// Progress while paging through every result page.
+    @Published private(set) var searchProgress: (loaded: Int, total: Int)?
     /// Song results, kept for code paths that only deal in tracks (player, queue, MCP).
     var results: [Track] { searchResults.songs }
 
@@ -279,6 +286,10 @@ final class AppModel: ObservableObject {
 
     // MARK: - Search
 
+    /// Runs a search and pages through every result the upstream will give.
+    ///
+    /// Fetching all pages up front (rather than on scroll) is what makes the local filters honest:
+    /// a filter over a partially loaded list silently hides matches that were never fetched.
     func runSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -288,12 +299,110 @@ final class AppModel: ObservableObject {
         }
         isSearching = true
         searchError = nil
-        defer { isSearching = false }
+        searchProgress = nil
+        clearFilters()
+        defer {
+            isSearching = false
+            searchProgress = nil
+        }
         do {
-            searchResults = try await platform.search(trimmed, kind: searchKind)
+            var merged = try await platform.search(trimmed, kind: searchKind, page: 1)
+            searchProgress = (merged.count, merged.totalAvailable)
+            var page = merged.nextPage
+            // Cap the walk so a huge result set cannot turn one search into hundreds of requests.
+            var fetched = 1
+            while let next = page, fetched < Self.maxSearchPages {
+                var more = try await platform.search(trimmed, kind: searchKind, page: next)
+                merged.songs += more.songs
+                merged.albums += more.albums
+                merged.playlists += more.playlists
+                merged.artists += more.artists
+                page = more.nextPage
+                fetched += 1
+                searchProgress = (merged.count, merged.totalAvailable)
+            }
+            merged.nextPage = nil
+            searchResults = merged
         } catch {
-            searchResults = SearchResults(kind: searchKind)
             searchError = error.localizedDescription
+        }
+    }
+
+    /// 10 pages × 50 = 500 results, enough to filter meaningfully without hammering the upstream.
+    static let maxSearchPages = 10
+
+    // MARK: - Local filtering
+
+    func clearFilters() {
+        filterYear = nil
+        filterComposer = nil
+        filterPerformer = nil
+        filterAlbum = nil
+    }
+
+    var hasActiveFilters: Bool {
+        filterYear != nil || filterComposer != nil || filterPerformer != nil || filterAlbum != nil
+    }
+
+    /// Songs after local filters. Only dimensions the data actually carries are offered.
+    var filteredSongs: [Track] {
+        searchResults.songs.filter { track in
+            if let year = filterYear, track.year != year { return false }
+            if let composer = filterComposer, track.composerCredit != composer { return false }
+            if let performer = filterPerformer,
+               !TrackDisplay.performers(from: track.artist).contains(where: { $0 == performer }) {
+                return false
+            }
+            if let album = filterAlbum, track.album != album { return false }
+            return true
+        }
+    }
+
+    var filteredAlbums: [Album] {
+        searchResults.albums.filter { album in
+            if let year = filterYear, album.year != year { return false }
+            if let performer = filterPerformer, album.artist != performer { return false }
+            return true
+        }
+    }
+
+    /// Filter choices derived from the fetched results — never a fixed list, so nothing is offered
+    /// that would match zero rows.
+    var availableYears: [Int] {
+        let years: [Int]
+        switch searchKind {
+        case .song: years = searchResults.songs.compactMap(\.year)
+        case .album: years = searchResults.albums.compactMap(\.year)
+        default: years = []
+        }
+        return Array(Set(years)).sorted(by: >)
+    }
+
+    var availableComposers: [String] {
+        Array(Set(searchResults.songs.compactMap(\.composerCredit))).sorted()
+    }
+
+    var availablePerformers: [String] {
+        let names: [String]
+        switch searchKind {
+        case .song: names = searchResults.songs.flatMap { TrackDisplay.performers(from: $0.artist) }
+        case .album: names = searchResults.albums.map(\.artist)
+        default: names = []
+        }
+        return Array(Set(names)).sorted()
+    }
+
+    var availableAlbums: [String] {
+        Array(Set(searchResults.songs.map(\.album).filter { !$0.isEmpty })).sorted()
+    }
+
+    /// How many rows the current filters leave visible.
+    var filteredCount: Int {
+        switch searchKind {
+        case .song: return filteredSongs.count
+        case .album: return filteredAlbums.count
+        case .playlist: return searchResults.playlists.count
+        case .singer: return searchResults.artists.count
         }
     }
 

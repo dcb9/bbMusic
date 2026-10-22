@@ -20,6 +20,10 @@ struct Track: Identifiable, Codable, Hashable, Sendable {
     var work: String?
     /// Disc label ("Disc 1") for multi-disc albums.
     var disc: String?
+    /// Publication year from the search result, when the API reports one.
+    var year: Int?
+    /// Composer parsed from the result's description ("作曲: …"). Only classical results carry it.
+    var composerCredit: String?
 
     var durationText: String {
         guard duration > 0 else { return "--:--" }
@@ -49,6 +53,8 @@ struct Album: Identifiable, Codable, Hashable, Sendable {
     let artist: String
     let trackCount: Int
     var artworkURL: URL?
+    /// Publication year, when the API reports one.
+    var year: Int?
 }
 
 /// Parsed lyrics: timed lines, each optionally carrying a translation.
@@ -95,7 +101,8 @@ protocol MusicPlatform: AnyObject, Sendable {
 
     func search(_ query: String) async throws -> [Track]
     /// Typed search: the same query can mean songs, albums, playlists or artists.
-    func search(_ query: String, kind: SearchKind) async throws -> SearchResults
+    /// `page` is 1-based. The caller pages until `nextPage` is nil.
+    func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults
     /// Tracks of a playlist found by search (it may belong to another user).
     func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track]
     /// An artist's songs.
@@ -264,6 +271,10 @@ struct SearchResults: Sendable {
     var playlists: [SearchPlaylist] = []
     var artists: [Artist] = []
     var kind: SearchKind = .song
+    /// Total matches the upstream reports, which can exceed what has been fetched.
+    var totalAvailable: Int = 0
+    /// Next page to request, or nil when everything has been fetched.
+    var nextPage: Int?
 
     var isEmpty: Bool {
         songs.isEmpty && albums.isEmpty && playlists.isEmpty && artists.isEmpty
