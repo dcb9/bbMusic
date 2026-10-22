@@ -307,7 +307,18 @@ private struct SearchPane: View {
         }
     }
 
-    /// Manual paging: the user decides when to pull the next batch of 100.
+    /// Pulls the next batch when the user scrolls to the bottom.
+    ///
+    /// Skipped while a filter is active: the filtered list is shorter than the unfiltered one, so
+    /// reaching its end does not mean the user has seen everything — loading on that signal would
+    /// keep firing until the whole result set was fetched, which is the opposite of paging.
+    private func autoLoad() {
+        guard !model.hasActiveFilters, model.canLoadMore, !model.isLoadingMore else { return }
+        Task { await model.loadMoreResults() }
+    }
+
+    /// Footer: reports progress rather than asking for a click, now that scrolling loads the next
+    /// batch. Keeps the "how much is loaded" distinction visible next to the filters.
     private var loadMoreBar: some View {
         VStack(spacing: 0) {
             Divider()
@@ -315,16 +326,19 @@ private struct SearchPane: View {
                 if model.isLoadingMore {
                     ProgressView().controlSize(.small).scaleEffect(0.6)
                     Text("载入中…").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else if model.canLoadMore {
+                    Text("继续向下滚动载入更多")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
                 } else {
-                    Button("载入更多（\(AppModel.searchBatchSize) 条）") {
-                        Task { await model.loadMoreResults() }
-                    }
-                    .controlSize(.small)
-                    Text("已载入 \(model.searchResults.count) / \(model.searchResults.totalAvailable)")
-                        .font(.system(size: 10.5).monospacedDigit())
+                    Text("已全部载入")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.tertiary)
                 }
                 Spacer()
+                Text("已载入 \(model.searchResults.count) / \(model.searchResults.totalAvailable)")
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -335,9 +349,14 @@ private struct SearchPane: View {
     private var resultsBody: some View {
         switch model.searchKind {
         case .song:
-            TrackList(tracks: model.filteredSongs, player: player, selectedID: $model.selectedTrackID)
+            TrackList(
+                tracks: model.filteredSongs,
+                player: player,
+                selectedID: $model.selectedTrackID,
+                onReachEnd: autoLoad
+            )
         case .album:
-            CardGrid(items: model.filteredAlbums) { album in
+            CardGrid(items: model.filteredAlbums, onReachEnd: autoLoad) { album in
                 Button {
                     Task { await model.openAlbum(album) }
                 } label: {
@@ -354,7 +373,7 @@ private struct SearchPane: View {
                 .buttonStyle(.plain)
             }
         case .playlist:
-            CardGrid(items: model.searchResults.playlists) { playlist in
+            CardGrid(items: model.searchResults.playlists, onReachEnd: autoLoad) { playlist in
                 Button {
                     Task { await model.open(playlist) }
                 } label: {
@@ -369,7 +388,7 @@ private struct SearchPane: View {
                 .buttonStyle(.plain)
             }
         case .singer:
-            CardGrid(items: model.searchResults.artists) { artist in
+            CardGrid(items: model.searchResults.artists, onReachEnd: autoLoad) { artist in
                 Button {
                     Task { await model.open(artist) }
                 } label: {
@@ -733,6 +752,8 @@ private struct TrackList: View {
     var showsDiscs: Bool = false
     /// Playlists hide the album column; search results and album pages show it.
     var showsAlbum: Bool = true
+    /// Called when the last row comes into view; nil disables infinite scrolling.
+    var onReachEnd: (() -> Void)?
 
     var body: some View {
         ScrollView {
@@ -768,6 +789,14 @@ private struct TrackList: View {
                         selectedID = track.id
                     }
                     Divider().opacity(0.35)
+                    if index == tracks.count - 1, let onReachEnd {
+                        // The last row appearing is the "reached the bottom" signal; a sentinel view
+                        // is used rather than a scroll offset because LazyVStack only builds rows
+                        // near the viewport, so its appearance means the user is actually there.
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear { onReachEnd() }
+                    }
                 }
             }
         }

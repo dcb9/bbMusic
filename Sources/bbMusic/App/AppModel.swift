@@ -56,6 +56,10 @@ final class AppModel: ObservableObject {
     /// Progress while paging through every result page.
     @Published private(set) var searchProgress: (loaded: Int, total: Int)?
     @Published private(set) var isLoadingMore = false
+    /// Bumped by every search. A run whose generation is stale discards its results instead of
+    /// overwriting a newer search — pressing Enter twice used to interleave two runs and leave the
+    /// result set inconsistent (mixed pages, zeroed total).
+    private var searchGeneration = 0
     /// Song results, kept for code paths that only deal in tracks (player, queue, MCP).
     var results: [Track] { searchResults.songs }
 
@@ -298,37 +302,64 @@ final class AppModel: ObservableObject {
             searchError = nil
             return
         }
+        searchGeneration += 1
+        let generation = searchGeneration
         isSearching = true
         searchError = nil
         searchProgress = nil
+        isLoadingMore = false
         clearFilters()
         defer {
-            isSearching = false
-            searchProgress = nil
+            if generation == searchGeneration {
+                isSearching = false
+                searchProgress = nil
+            }
         }
         do {
             // One batch = 100 results. The upstream only ever returns 20 per request, so a batch is
             // five requests; the next batch waits for the user to ask for it.
-            let merged = try await fetchBatch(trimmed, kind: searchKind, fromPage: 1, into: SearchResults(kind: searchKind))
+            var merged = try await fetchBatch(
+                trimmed, kind: searchKind, fromPage: 1,
+                into: SearchResults(kind: searchKind), generation: generation
+            )
+            // The upstream intermittently answers an empty page; retrying once turns a transient
+            // hiccup into a normal result instead of showing "没有找到".
+            if merged.isEmpty, generation == searchGeneration {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                merged = try await fetchBatch(
+                    trimmed, kind: searchKind, fromPage: 1,
+                    into: SearchResults(kind: searchKind), generation: generation
+                )
+            }
+            guard generation == searchGeneration else { return }
             searchResults = merged
             searchProgress = (merged.count, merged.totalAvailable)
         } catch {
+            guard generation == searchGeneration else { return }
             searchError = error.localizedDescription
         }
     }
 
-    /// Loads the next batch of results. No-op when everything has already been fetched.
+    /// Loads the next batch of results. No-op when everything has already been fetched, or when a
+    /// batch is already in flight — the scroll sentinel can fire repeatedly while one loads.
     func loadMoreResults() async {
         guard let next = searchResults.nextPage, !isLoadingMore else { return }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let generation = searchGeneration
         isLoadingMore = true
-        defer { isLoadingMore = false }
+        defer { if generation == searchGeneration { isLoadingMore = false } }
         do {
-            let merged = try await fetchBatch(trimmed, kind: searchKind, fromPage: next, into: searchResults)
+            let merged = try await fetchBatch(
+                trimmed, kind: searchKind, fromPage: next,
+                into: searchResults, generation: generation
+            )
+            // A search started while this batch was in flight wins.
+            guard generation == searchGeneration else { return }
             searchResults = merged
             searchProgress = (merged.count, merged.totalAvailable)
         } catch {
+            guard generation == searchGeneration else { return }
             searchError = error.localizedDescription
         }
     }
@@ -338,23 +369,41 @@ final class AppModel: ObservableObject {
         _ keyword: String,
         kind: SearchKind,
         fromPage: Int,
-        into existing: SearchResults
+        into existing: SearchResults,
+        generation: Int
     ) async throws -> SearchResults {
         var merged = existing
         var page: Int? = fromPage
         var collected = 0
+        // The upstream intermittently serves a hollow page — 0 items, total 0, more false — and
+        // then resumes normally on the following page (observed at pages 3-4 and 10-12 of one
+        // query). Treating that as the end of the results silently truncated every search to
+        // whatever happened to load before the hiccup.
+        var consecutiveEmpty = 0
         while let current = page, collected < Self.searchBatchSize {
+            if generation != searchGeneration { break }
             let chunk = try await platform.search(keyword, kind: kind, page: current)
+            if chunk.isEmpty {
+                consecutiveEmpty += 1
+                if consecutiveEmpty > Self.maxConsecutiveEmptyPages {
+                    page = nil
+                    break
+                }
+                // Skip the hollow page and try the next one.
+                page = current + 1
+                continue
+            }
+            consecutiveEmpty = 0
             merged.songs += chunk.songs
             merged.albums += chunk.albums
             merged.playlists += chunk.playlists
             merged.artists += chunk.artists
-            merged.totalAvailable = chunk.totalAvailable
+            merged.totalAvailable = max(merged.totalAvailable, chunk.totalAvailable)
             collected += chunk.count
             page = chunk.nextPage
-            searchProgress = (merged.count, merged.totalAvailable)
-            // An empty page means the upstream has nothing more regardless of what it claims.
-            if chunk.isEmpty { page = nil }
+            if generation == searchGeneration {
+                searchProgress = (merged.count, merged.totalAvailable)
+            }
         }
         merged.nextPage = page
         return merged
@@ -362,6 +411,10 @@ final class AppModel: ObservableObject {
 
     /// Results per batch: 100, which is five upstream pages.
     static let searchBatchSize = 100
+
+    /// How many hollow pages in a row mean the results really are exhausted. The upstream has been
+    /// seen to return two in a row before resuming, so the limit is deliberately above that.
+    static let maxConsecutiveEmptyPages = 4
 
     /// Whether a "load more" action is available.
     var canLoadMore: Bool { searchResults.nextPage != nil }

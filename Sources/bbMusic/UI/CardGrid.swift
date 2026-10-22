@@ -7,6 +7,8 @@ import SwiftUI
 struct CardGrid<Item: Identifiable, Content: View>: View {
     let items: [Item]
     var minimumWidth: CGFloat = 120
+    /// Called when the last card comes into view; nil disables infinite scrolling.
+    var onReachEnd: (() -> Void)?
     @ViewBuilder let content: (Item) -> Content
 
     private var columns: [GridItem] {
@@ -18,6 +20,13 @@ struct CardGrid<Item: Identifiable, Content: View>: View {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                 ForEach(items) { item in
                     content(item)
+                }
+                if let onReachEnd {
+                    // Sentinel: LazyVGrid only builds cards near the viewport, so this appearing
+                    // means the user scrolled to the bottom.
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear { onReachEnd() }
                 }
             }
             .padding(16)

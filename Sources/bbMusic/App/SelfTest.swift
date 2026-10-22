@@ -273,6 +273,41 @@ struct SelfTest {
             let totalBefore = model.searchResults.songs.count
             if canMore { await model.loadMoreResults() }
             let afterMore = model.searchResults.songs.count
+            // The scroll sentinel fires repeatedly. Overlapping load-more calls must not each
+            // fetch a batch, and overlapping searches must not interleave into a corrupt result set.
+            model.query = "贝多芬"
+            model.searchKind = .song
+            await model.runSearch()
+            let baseline = model.searchResults.songs.count
+            let totalBaseline = model.searchResults.totalAvailable
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0..<3 {
+                    group.addTask { @MainActor in await model.loadMoreResults() }
+                }
+            }
+            let afterConcurrent = model.searchResults.songs.count
+            steps.append(Step(
+                name: "no-double-load",
+                ok: afterConcurrent - baseline <= AppModel.searchBatchSize && afterConcurrent > baseline,
+                detail: "\(baseline) -> \(afterConcurrent) after 3 concurrent calls, total \(model.searchResults.totalAvailable)"
+            ))
+
+            // Two searches fired back to back: the newer one must win and leave a consistent set.
+            model.query = "莫扎特"
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { @MainActor in await model.runSearch() }
+                group.addTask { @MainActor in await model.runSearch() }
+            }
+            let concurrentTotal = model.searchResults.totalAvailable
+            let concurrentCount = model.searchResults.songs.count
+            steps.append(Step(
+                name: "search-race",
+                ok: concurrentTotal > 0 && concurrentCount > 0 && concurrentCount <= AppModel.searchBatchSize * 2,
+                detail: "\(concurrentCount) songs, total \(concurrentTotal)"
+            ))
+
+            model.query = "贝多芬"
+            await model.runSearch()
             steps.append(Step(
                 name: "batch-100",
                 ok: firstBatch >= 90 && (!canMore || afterMore > totalBefore),
@@ -282,6 +317,10 @@ struct SelfTest {
             model.query = "贝多芬"
             model.searchKind = .album
             await model.runSearch()
+            if model.searchResults.albums.isEmpty {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                await model.runSearch()
+            }
             let years = model.searchResults.albums.compactMap(\.year)
             steps.append(Step(
                 name: "album-year",
