@@ -92,6 +92,12 @@ struct SelfTest {
         let advanced = await waitUntil(timeout: 45) {
             model.player.currentTime > 1.0
         }
+        // If nothing advances, say whether the machine can render audio at all. Without this the
+        // check reports a product failure when the real cause is an unavailable output device.
+        var audioNote = ""
+        if !advanced, !Self.audioOutputIsUsable() {
+            audioNote = " (no usable audio output device on this machine)"
+        }
         steps.append(Step(
             name: "playback",
             ok: advanced,
@@ -101,7 +107,7 @@ struct SelfTest {
                 model.player.duration,
                 model.player.isPlaying ? "yes" : "no",
                 model.player.isPreview ? "yes" : "no"
-            ) + " notice=\(model.player.notice ?? "none")"
+            ) + " notice=\(model.player.notice ?? "none")" + audioNote
         ))
 
         // 6b. Library reads (require a signed-in account).
@@ -248,7 +254,13 @@ struct SelfTest {
         // the app's job is to page past them (covered by `batch-100`), not for the upstream to be
         // well behaved.
         if model.connection.isConnected {
-            let first = try? await model.platform.search("贝多芬", kind: .song, page: 1)
+            // Retried once: the upstream intermittently answers an empty page, and this check is
+            // about pagination, not about the upstream being reliable.
+            var first = try? await model.platform.search("贝多芬", kind: .song, page: 1)
+            if (first?.songs.isEmpty ?? true) {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                first = try? await model.platform.search("贝多芬", kind: .song, page: 1)
+            }
             steps.append(Step(
                 name: "paging",
                 ok: (first?.songs.isEmpty == false) && (first?.nextPage != nil),
@@ -516,6 +528,23 @@ struct SelfTest {
         ))
 
         return finish(steps)
+    }
+
+    /// Whether CoreAudio can actually render, which is separate from whether the player works.
+    @MainActor
+    private static func audioOutputIsUsable() -> Bool {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        do {
+            try engine.start()
+            engine.stop()
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Talks to the MCP endpoint the same way a client would.

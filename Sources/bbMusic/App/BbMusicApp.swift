@@ -8,7 +8,17 @@ struct BbMusicApp: App {
     var body: some Scene {
         Window("bbMusic", id: "main") {
             Group {
-                if SelfTest.isRequested {
+                if ScreenshotCapture.isRequested {
+                    RootView(model: model, player: model.player)
+                        .sheet(isPresented: $model.showLoginSheet) { LoginSheet(model: model) }
+                        .sheet(isPresented: $model.showLastFMPanel) { LastFMPanel(scrobbler: model.scrobbler) }
+                        .onAppear {
+                            Task { @MainActor in
+                                let code = await ScreenshotCapture.run(model: model)
+                                exit(code)
+                            }
+                        }
+                } else if SelfTest.isRequested {
                     SelfTestView(model: model)
                 } else {
                     RootView(model: model, player: model.player)
