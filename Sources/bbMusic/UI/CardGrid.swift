@@ -40,18 +40,26 @@ struct MediaCard: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.primary.opacity(0.08))
-                AsyncImage(url: artworkURL) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else if phase.error != nil {
-                        Image(systemName: placeholderSymbol)
-                            .font(.system(size: 24))
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        ProgressView().controlSize(.small).scaleEffect(0.6)
+                if let artworkURL {
+                    AsyncImage(url: artworkURL) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else if phase.error != nil {
+                            Image(systemName: placeholderSymbol)
+                                .font(.system(size: 24))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            ProgressView().controlSize(.small).scaleEffect(0.6)
+                        }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    // No artwork at all: show the placeholder straight away rather than a spinner
+                    // that would never resolve.
+                    Image(systemName: placeholderSymbol)
+                        .font(.system(size: 24))
+                        .foregroundStyle(.tertiary)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .frame(width: side, height: side)
             .overlay(

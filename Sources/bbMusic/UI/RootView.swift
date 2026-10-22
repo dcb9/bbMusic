@@ -423,7 +423,8 @@ private struct PlaylistsPane: View {
                         MediaCard(
                             title: playlist.name,
                             subtitle: "\(playlist.trackCount) 首\(playlist.isCollected ? " · 收藏" : "")",
-                            artworkURL: model.cover(for: playlist),
+                            // Whatever the API supplied; the card shows a placeholder when it didn't.
+                            artworkURL: playlist.artworkURL,
                             placeholderSymbol: playlist.isLikedSongs ? "heart.fill" : "music.note.list",
                             side: 120,
                             isSelected: model.selectedPlaylist?.id == playlist.id

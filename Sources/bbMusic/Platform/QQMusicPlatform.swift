@@ -231,6 +231,16 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         throw PlatformError(full.reason ?? "这首歌暂时无法播放")
     }
 
+    /// QQ Music hands out `http://` URLs for both audio and artwork. Images are loaded through
+    /// URLSession, so ATS blocks the plain-http ones exactly like it blocks audio — upgrade them.
+    private static func secureImageURL(_ raw: String) -> URL? {
+        guard !raw.isEmpty else { return nil }
+        if raw.hasPrefix("http://") {
+            return URL(string: "https://" + raw.dropFirst("http://".count))
+        }
+        return URL(string: raw)
+    }
+
     /// QQ Music hands out `http://` media URLs. AVFoundation loads media out of process, so the
     /// app's App Transport Security exceptions do not apply to it and a plain-http asset fails with
     /// `-1022` inside any app bundle (verified: the same URL plays from a bare CLI binary and fails
@@ -336,6 +346,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             let count = (entry["songNum"] as? Int)
                 ?? (entry["songnum"] as? Int)
                 ?? 0
+            // Cover: whatever the API gives. Nothing is invented when it gives none — a playlist
+            // whose tracks are delisted has no artwork and no artwork source either.
             let cover = (entry["picUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? (entry["logo"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? (entry["bigpicUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -348,7 +360,7 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
                 trackCount: count,
                 isLikedSongs: isLiked,
                 isCollected: isCollected,
-                artworkURL: cover.flatMap(URL.init(string:))
+                artworkURL: cover.flatMap(Self.secureImageURL)
             )
         }
         // 我喜欢 first, then the user's own order.
@@ -517,9 +529,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         let count = (item["songnum"] as? Int) ?? 0
         let listens = (item["listennum"] as? Int) ?? 0
         var artwork: URL?
-        if let logo = item["logo"] as? String, !logo.isEmpty {
-            // The logo URL carries a size query (`?n=1`); ask for a bigger one where possible.
-            artwork = URL(string: logo.replacingOccurrences(of: "/300?", with: "/300?"))
+        if let logo = item["logo"] as? String {
+            artwork = Self.secureImageURL(logo)
         }
         return SearchPlaylist(
             id: id, name: name, creator: creator,
@@ -533,8 +544,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         let songs = (item["songNum"] as? Int) ?? 0
         let albums = (item["albumNum"] as? Int) ?? 0
         var artwork: URL?
-        if let pic = item["singerPic"] as? String, !pic.isEmpty {
-            artwork = URL(string: pic)
+        if let pic = item["singerPic"] as? String {
+            artwork = Self.secureImageURL(pic)
         }
         return Artist(id: mid, name: name, songCount: songs, albumCount: albums, artworkURL: artwork)
     }

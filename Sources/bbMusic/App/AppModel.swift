@@ -74,8 +74,6 @@ final class AppModel: ObservableObject {
     /// Detail views reached from search, which are not part of the user's own library.
     @Published private(set) var searchPlaylistDetail: SearchPlaylist?
     @Published private(set) var searchArtistDetail: Artist?
-    /// Playlist covers derived from a track, for playlists the API returned without one.
-    @Published private(set) var derivedCovers: [String: URL] = [:]
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -243,20 +241,6 @@ final class AppModel: ObservableObject {
         albumDetails = nil
         selectedPlaylist = playlist
         await loadTracks { try await platform.tracks(in: playlist) }
-        deriveCoverIfNeeded(for: playlist)
-    }
-
-    /// Some playlists come back without a cover. Use the artwork of the first track that has one,
-    /// which is what the user would recognise the playlist by anyway.
-    private func deriveCoverIfNeeded(for playlist: Playlist) {
-        guard playlist.artworkURL == nil, derivedCovers[playlist.id] == nil else { return }
-        guard let cover = libraryTracks.compactMap(\.artworkURL).first else { return }
-        derivedCovers[playlist.id] = cover
-    }
-
-    /// The cover to show for a playlist: its own, or one derived from its tracks.
-    func cover(for playlist: Playlist) -> URL? {
-        playlist.artworkURL ?? derivedCovers[playlist.id]
     }
 
     func open(_ album: Album) async {
