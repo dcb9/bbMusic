@@ -87,7 +87,9 @@ struct SelfTest {
 
         // 6. Real playback through AVPlayer, driven by the app's own Player.
         model.player.playNow(track)
-        let advanced = await waitUntil(timeout: 20) {
+        // A full-length FLAC over the network can take a while to start; wait generously and
+        // report what the player actually says if it never advances.
+        let advanced = await waitUntil(timeout: 45) {
             model.player.currentTime > 1.0
         }
         steps.append(Step(
@@ -274,6 +276,11 @@ struct SelfTest {
             let canMore = model.canLoadMore
             let totalBefore = model.searchResults.songs.count
             if canMore { await model.loadMoreResults() }
+            // A batch can come back empty when the upstream serves a run of hollow pages; a second
+            // attempt (what a user gets by scrolling again) should then make progress.
+            if model.searchResults.songs.count == totalBefore, model.canLoadMore {
+                await model.loadMoreResults()
+            }
             let afterMore = model.searchResults.songs.count
             // The scroll sentinel fires repeatedly. Overlapping load-more calls must not each
             // fetch a batch, and overlapping searches must not interleave into a corrupt result set.
@@ -330,6 +337,34 @@ struct SelfTest {
                 detail: "\(years.count)/\(model.searchResults.albums.count) albums have a year"
             ))
             model.searchKind = .song
+        }
+
+        // 6c4. Results must appear page by page, not only once a whole batch has loaded.
+        if model.connection.isConnected {
+            model.query = "贝多芬"
+            model.searchKind = .song
+            let task = Task { @MainActor in await model.runSearch() }
+            // Sample while the search runs: the first page (20) must be visible well before the
+            // batch of 100 completes.
+            var sawPartial = false
+            var partialCount = 0
+            for _ in 0..<40 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                let count = model.searchResults.songs.count
+                if count > 0 && count < AppModel.searchBatchSize {
+                    sawPartial = true
+                    partialCount = max(partialCount, count)
+                }
+                if !model.isSearching { break }
+            }
+            await task.value
+            steps.append(Step(
+                name: "streaming",
+                ok: sawPartial,
+                detail: sawPartial
+                    ? "saw \(partialCount) results before the batch finished"
+                    : "results only appeared after the full batch"
+            ))
         }
 
         // 6d. Audio quality: the API must report real files, not a fixed menu.

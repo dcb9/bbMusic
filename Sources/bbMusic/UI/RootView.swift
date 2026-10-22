@@ -183,9 +183,10 @@ private struct SearchPane: View {
             if let notice = player.notice {
                 NoticeBar(text: notice)
             }
-            if model.isSearching {
+            if model.searchResults.isEmpty, model.isSearching {
+                // Only before the first page arrives; after that the list stays put and grows.
                 StatusPane(title: "搜索中…", message: nil, symbol: nil)
-            } else if let error = model.searchError {
+            } else if let error = model.searchError, model.searchResults.isEmpty {
                 StatusPane(title: "搜索失败", message: error, symbol: "exclamationmark.triangle")
             } else if model.searchResults.isEmpty {
                 StatusPane(
@@ -301,7 +302,7 @@ private struct SearchPane: View {
     private var results: some View {
         VStack(spacing: 0) {
             resultsBody
-            if model.canLoadMore || model.isLoadingMore {
+            if model.canLoadMore || model.isLoadingMore || (model.isSearching && !model.searchResults.isEmpty) {
                 loadMoreBar
             }
         }
@@ -323,7 +324,7 @@ private struct SearchPane: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 8) {
-                if model.isLoadingMore {
+                if model.isLoadingMore || model.isSearching {
                     ProgressView().controlSize(.small).scaleEffect(0.6)
                     Text("载入中…").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else if model.canLoadMore {
