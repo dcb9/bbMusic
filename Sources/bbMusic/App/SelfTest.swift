@@ -191,6 +191,38 @@ struct SelfTest {
                 : classicalFailures.joined(separator: "; ")
         ))
 
+        // 6b3. Typed search: each kind comes from the same endpoint with a different item shape,
+        // so each is exercised rather than assuming one parser covers them.
+        if model.connection.isConnected {
+            var typedFailures: [String] = []
+            var typedDetail: [String] = []
+            for kind in SearchKind.allCases {
+                do {
+                    let results = try await model.platform.search("周杰伦", kind: kind)
+                    if results.count == 0 { typedFailures.append(kind.label) }
+                    typedDetail.append("\(kind.label) \(results.count)")
+                } catch {
+                    typedFailures.append("\(kind.label): \(error.localizedDescription)")
+                }
+            }
+            steps.append(Step(
+                name: "search-types",
+                ok: typedFailures.isEmpty,
+                detail: typedFailures.isEmpty ? typedDetail.joined(separator: ", ") : typedFailures.joined(separator: "; ")
+            ))
+
+            // A playlist found by search must open into real tracks.
+            if let found = try? await model.platform.search("周杰伦", kind: .playlist),
+               let playlist = found.playlists.first {
+                let tracks = (try? await model.platform.tracks(inSearchPlaylist: playlist)) ?? []
+                steps.append(Step(
+                    name: "found-playlist",
+                    ok: !tracks.isEmpty,
+                    detail: "\(playlist.name): \(tracks.count) tracks"
+                ))
+            }
+        }
+
         // 6d. Audio quality: the API must report real files, not a fixed menu.
         if let track = model.results.first {
             let qualities = (try? await model.platform.availableQualities(for: track)) ?? []

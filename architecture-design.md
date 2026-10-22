@@ -153,6 +153,14 @@ QQ 音乐其余位置不提供结构化的作曲家/作品号/演奏者字段。
 
 **MCP**：App 内 `NWListener` 只绑 `127.0.0.1:43119`，Bearer token 每次安装生成一次（0600 落盘）。10 个工具覆盖搜索、播放控制、库读取、音质、歌词，**没有任何写操作**——模型可以点歌，不能改歌单/红心/Last.fm。这个边界是有意的：写操作一旦被误调就是真实的账号变更。
 
+## 搜索与网格
+
+`/search` 用同一个端点、靠 `type=song|album|playlist|singer` 切换，**四种类型的 item 结构完全不同**：专辑是 `albummid`/`singer`(字符串)，歌单是 `dissid`/`dissname`/`nickname`，歌手是 `singerMID`/`singerName`/`singerPic`。所以 `SearchKind` 与 `SearchResults` 各自建模，不复用一个 parser。
+
+搜索到的**他人歌单**走 `/getSongListDetail?disstid=…`，曲目藏在 `response.cdlist[0].songlist` 里——没有顶层 `songlist`，按顶层找会静默得到空歌单。
+
+歌单与专辑用自适应格子（封面 120pt）而不是列表：封面是这两个东西的识别特征，列表里只能看到名字。
+
 ## 决策记录
 
 **用 `AVPlayer` 而不是 `AVQueuePlayer`。** `AVQueuePlayer` 的队列是「播完自动前进」的单调序列，任意跳转、插入、移除、随机播放都要绕开它；本项目的队列需要被用户随时重排。由 `Playback` 自己持有队列、在曲目结束时推进 `AVPlayer`，模型更简单，也更符合「队列是唯一真相」。

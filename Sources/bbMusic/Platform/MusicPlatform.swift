@@ -89,6 +89,12 @@ protocol MusicPlatform: AnyObject, Sendable {
     func signOut() async throws
 
     func search(_ query: String) async throws -> [Track]
+    /// Typed search: the same query can mean songs, albums, playlists or artists.
+    func search(_ query: String, kind: SearchKind) async throws -> SearchResults
+    /// Tracks of a playlist found by search (it may belong to another user).
+    func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track]
+    /// An artist's songs.
+    func songs(by artist: Artist) async throws -> [Track]
     /// Library reads. Each returns an empty list when the platform has nothing to show rather than
     /// failing, so the UI can render an honest empty state.
     func likedSongs() async throws -> [Track]
@@ -207,4 +213,63 @@ struct AlbumClassicalDetails: Sendable, Equatable {
     var composer: String?
     var work: String?
     var discCount: Int
+}
+
+/// What kind of thing a search is looking for. QQ Music serves each type from the same endpoint
+/// with a different `type` parameter and a different item shape.
+enum SearchKind: String, CaseIterable, Identifiable, Sendable {
+    case song, album, playlist, singer
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .song: return "歌曲"
+        case .album: return "专辑"
+        case .playlist: return "歌单"
+        case .singer: return "歌手"
+        }
+    }
+}
+
+/// A playlist found by search. Distinct from `Playlist`, which is one of *your* playlists and can be
+/// opened for its tracks; a search result may belong to anyone.
+struct SearchPlaylist: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let creator: String
+    let trackCount: Int
+    let artworkURL: URL?
+    let listenCount: Int
+}
+
+/// An artist found by search.
+struct Artist: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let songCount: Int
+    let albumCount: Int
+    let artworkURL: URL?
+}
+
+/// One page of typed search results.
+struct SearchResults: Sendable {
+    var songs: [Track] = []
+    var albums: [Album] = []
+    var playlists: [SearchPlaylist] = []
+    var artists: [Artist] = []
+    var kind: SearchKind = .song
+
+    var isEmpty: Bool {
+        songs.isEmpty && albums.isEmpty && playlists.isEmpty && artists.isEmpty
+    }
+
+    var count: Int {
+        switch kind {
+        case .song: return songs.count
+        case .album: return albums.count
+        case .playlist: return playlists.count
+        case .singer: return artists.count
+        }
+    }
 }

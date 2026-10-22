@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
         case liked
         case playlists
         case albums
+        case queue
 
         var id: String { rawValue }
 
@@ -22,6 +23,7 @@ final class AppModel: ObservableObject {
             case .liked: return "我喜欢"
             case .playlists: return "歌单"
             case .albums: return "专辑"
+            case .queue: return "播放队列"
             }
         }
 
@@ -33,6 +35,7 @@ final class AppModel: ObservableObject {
             case .liked: return "heart"
             case .playlists: return "music.note.list"
             case .albums: return "square.stack"
+            case .queue: return "list.bullet"
             }
         }
     }
@@ -45,7 +48,20 @@ final class AppModel: ObservableObject {
     @Published var section: Section = .search
     @Published var pane: Pane = .list
     @Published var query = ""
-    @Published private(set) var results: [Track] = []
+    @Published var searchKind: SearchKind = .song {
+        didSet {
+            guard oldValue != searchKind, !query.isEmpty else { return }
+            Task { await runSearch() }
+        }
+    }
+    @Published private(set) var searchResults = SearchResults()
+    /// Song results, kept for code paths that only deal in tracks (player, queue, MCP).
+    var results: [Track] { searchResults.songs }
+
+    /// Whether search has drilled into an album, a found playlist, or an artist.
+    var hasSearchDetail: Bool {
+        selectedAlbum != nil || searchPlaylistDetail != nil || searchArtistDetail != nil
+    }
     @Published private(set) var isSearching = false
     @Published private(set) var searchError: String?
     @Published private(set) var connection: PlatformConnectionState = .unknown
@@ -62,6 +78,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var libraryError: String?
     /// Classical credits for the album currently open, when the platform supplied them.
     @Published private(set) var albumDetails: AlbumClassicalDetails?
+    /// Detail views reached from search, which are not part of the user's own library.
+    @Published private(set) var searchPlaylistDetail: SearchPlaylist?
+    @Published private(set) var searchArtistDetail: Artist?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -212,7 +231,7 @@ final class AppModel: ObservableObject {
             await loadTracks { try await platform.likedSongs() }
         case .playlists:
             libraryTracks = []
-        case .albums:
+        case .albums, .queue:
             libraryTracks = []
         default:
             libraryTracks = []
@@ -267,7 +286,7 @@ final class AppModel: ObservableObject {
     func runSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            results = []
+            searchResults = SearchResults(kind: searchKind)
             searchError = nil
             return
         }
@@ -275,17 +294,64 @@ final class AppModel: ObservableObject {
         searchError = nil
         defer { isSearching = false }
         do {
-            results = try await platform.search(trimmed)
+            searchResults = try await platform.search(trimmed, kind: searchKind)
         } catch {
-            results = []
+            searchResults = SearchResults(kind: searchKind)
             searchError = error.localizedDescription
         }
     }
 
+    /// Opens a playlist that came from search (it may belong to another user).
+    func open(_ playlist: SearchPlaylist) async {
+        section = .search
+        pane = .list
+        selectedPlaylist = nil
+        selectedAlbum = nil
+        albumDetails = nil
+        searchPlaylistDetail = playlist
+        await loadTracks { try await platform.tracks(inSearchPlaylist: playlist) }
+    }
+
+    /// An artist's songs.
+    func open(_ artist: Artist) async {
+        section = .search
+        pane = .list
+        selectedPlaylist = nil
+        selectedAlbum = nil
+        albumDetails = nil
+        searchArtistDetail = artist
+        await loadTracks { try await platform.songs(by: artist) }
+    }
+
+    func openAlbum(_ album: Album) async {
+        section = .search
+        pane = .list
+        selectedPlaylist = nil
+        searchPlaylistDetail = nil
+        searchArtistDetail = nil
+        selectedAlbum = album
+        albumDetails = nil
+        await loadTracks {
+            let result = try await platform.albumTracks(album)
+            albumDetails = result.details
+            return result.tracks
+        }
+    }
+
+    func clearSearchDetail() {
+        selectedAlbum = nil
+        searchPlaylistDetail = nil
+        searchArtistDetail = nil
+        albumDetails = nil
+        libraryTracks = []
+        libraryError = nil
+    }
+
     func clearSearch() {
         query = ""
-        results = []
+        searchResults = SearchResults()
         searchError = nil
+        clearSearchDetail()
     }
 
     /// Sections other than search are not implemented yet; the pane says so instead of pretending
@@ -304,6 +370,8 @@ final class AppModel: ObservableObject {
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取歌单。"
         case .albums:
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取收藏的专辑。"
+        case .queue:
+            return nil
         }
     }
 

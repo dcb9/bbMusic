@@ -137,11 +137,15 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
     // MARK: - Catalog
 
     func search(_ query: String) async throws -> [Track] {
+        try await search(query, kind: .song).songs
+    }
+
+    func search(_ query: String, kind: SearchKind) async throws -> SearchResults {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
+        guard !trimmed.isEmpty else { return SearchResults(kind: kind) }
         let data = try await get("/search", query: [
             .init(name: "keyword", value: trimmed),
-            .init(name: "type", value: "song"),
+            .init(name: "type", value: kind.rawValue),
             .init(name: "page", value: "1"),
             .init(name: "limit", value: "50"),
         ])
@@ -155,6 +159,55 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             let message = (root["message"] as? String) ?? "上游没有返回结果列表"
             throw PlatformError("搜索失败（code \(code)）：\(message)")
         }
+
+        var results = SearchResults(kind: kind)
+        switch kind {
+        case .song:
+            results.songs = items.compactMap(Self.track(from:))
+        case .album:
+            results.albums = items.compactMap(Self.searchAlbum(from:))
+        case .playlist:
+            results.playlists = items.compactMap(Self.searchPlaylist(from:))
+        case .singer:
+            results.artists = items.compactMap(Self.artist(from:))
+        }
+        return results
+    }
+
+    func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track] {
+        let data = try await get("/getSongListDetail", query: [
+            .init(name: "disstid", value: playlist.id),
+            .init(name: "song_begin", value: "0"),
+            .init(name: "song_num", value: "1000"),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        // The legacy endpoint nests the tracks two levels down, inside `cdlist[0]`; there is no
+        // top-level `songlist`, so looking for one silently yields an empty playlist.
+        let payload = (root["response"] as? [String: Any]) ?? root
+        var songs: [[String: Any]] = []
+        if let discs = payload["cdlist"] as? [[String: Any]] {
+            for disc in discs {
+                songs.append(contentsOf: (disc["songlist"] as? [[String: Any]]) ?? [])
+            }
+        }
+        if songs.isEmpty {
+            songs = (payload["songlist"] as? [[String: Any]])
+                ?? ((payload["data"] as? [String: Any])?["songlist"] as? [[String: Any]])
+                ?? []
+        }
+        return songs.compactMap(Self.track(from:))
+    }
+
+    func songs(by artist: Artist) async throws -> [Track] {
+        let data = try await get("/singer/songs", query: [
+            .init(name: "singermid", value: artist.id),
+            .init(name: "page", value: "1"),
+            .init(name: "limit", value: "100"),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let items = (root["items"] as? [[String: Any]])
+            ?? ((root["data"] as? [String: Any])?["list"] as? [[String: Any]])
+            ?? []
         return items.compactMap(Self.track(from:))
     }
 
@@ -418,6 +471,53 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             work: nil,
             disc: nil
         )
+    }
+
+    private static func searchAlbum(from item: [String: Any]) -> Album? {
+        guard let mid = item["albummid"] as? String, !mid.isEmpty else { return nil }
+        let name = (item["name"] as? String) ?? "未知专辑"
+        // `singer` here is a plain string, unlike the album list endpoint's array.
+        let artist = (item["singer"] as? String)
+            ?? ((item["singer"] as? [[String: Any]])?.compactMap { $0["name"] as? String }.joined(separator: " / "))
+            ?? "未知艺术家"
+        let count = (item["song_num"] as? Int) ?? 0
+        return Album(
+            id: mid,
+            name: name,
+            artist: artist,
+            trackCount: count,
+            artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(mid).jpg")
+        )
+    }
+
+    private static func searchPlaylist(from item: [String: Any]) -> SearchPlaylist? {
+        let id = (item["dissid"] as? String) ?? (item["dissid"] as? Int).map(String.init)
+        guard let id, !id.isEmpty else { return nil }
+        let name = (item["dissname"] as? String) ?? "未命名歌单"
+        let creator = (item["nickname"] as? String) ?? ""
+        let count = (item["songnum"] as? Int) ?? 0
+        let listens = (item["listennum"] as? Int) ?? 0
+        var artwork: URL?
+        if let logo = item["logo"] as? String, !logo.isEmpty {
+            // The logo URL carries a size query (`?n=1`); ask for a bigger one where possible.
+            artwork = URL(string: logo.replacingOccurrences(of: "/300?", with: "/300?"))
+        }
+        return SearchPlaylist(
+            id: id, name: name, creator: creator,
+            trackCount: count, artworkURL: artwork, listenCount: listens
+        )
+    }
+
+    private static func artist(from item: [String: Any]) -> Artist? {
+        guard let mid = item["singerMID"] as? String, !mid.isEmpty else { return nil }
+        let name = (item["singerName"] as? String) ?? "未知歌手"
+        let songs = (item["songNum"] as? Int) ?? 0
+        let albums = (item["albumNum"] as? Int) ?? 0
+        var artwork: URL?
+        if let pic = item["singerPic"] as? String, !pic.isEmpty {
+            artwork = URL(string: pic)
+        }
+        return Artist(id: mid, name: name, songCount: songs, albumCount: albums, artworkURL: artwork)
     }
 
     private static func playback(from data: Data, mid: String) -> (url: URL?, reason: String?) {

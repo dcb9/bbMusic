@@ -40,6 +40,10 @@ struct RootView: View {
             ) {
                 model.showLoginSheet = true
             }
+        } else if model.section == .queue {
+            QueuePane(model: model, player: player)
+        } else if model.section == .search, model.hasSearchDetail {
+            TracksPane(model: model, player: player, context: .searchDetail)
         } else if model.section == .search {
             // Search has its own pane with the query field. Without this branch it fell through to
             // the library pane, which has no way to type a query at all.
@@ -76,7 +80,7 @@ private struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No platform banner: the account state belongs at the bottom, next to the other one.
-            section("浏览", items: [.search, .daily, .charts])
+            section("浏览", items: [.search, .daily, .charts, .queue])
             section("我的音乐", items: [.liked, .playlists, .albums])
 
             if model.connection.isConnected, !model.playlists.isEmpty, model.section == .playlists {
@@ -213,39 +217,96 @@ private struct SearchPane: View {
                 StatusPane(title: "搜索中…", message: nil, symbol: nil)
             } else if let error = model.searchError {
                 StatusPane(title: "搜索失败", message: error, symbol: "exclamationmark.triangle")
-            } else if model.results.isEmpty {
+            } else if model.searchResults.isEmpty {
                 StatusPane(
-                    title: model.query.isEmpty ? "搜索歌曲" : "没有找到结果",
+                    title: model.query.isEmpty ? "搜索" : "没有找到\(model.searchKind.label)",
                     message: model.query.isEmpty
-                        ? "输入歌名、歌手或专辑，回车开始搜索。"
-                        : "换个关键词试试，或者检查网络与登录状态。",
+                        ? "输入关键词后回车。可以切换搜索歌曲、专辑、歌单或歌手。"
+                        : "换个关键词，或换一种搜索类型试试。",
                     symbol: "magnifyingglass"
                 )
             } else {
-                TrackList(tracks: model.results, player: player, selectedID: $model.selectedTrackID)
+                results
             }
         }
         .onAppear { searchFocused = true }
     }
 
+    @ViewBuilder
+    private var results: some View {
+        switch model.searchKind {
+        case .song:
+            TrackList(tracks: model.searchResults.songs, player: player, selectedID: $model.selectedTrackID)
+        case .album:
+            CardGrid(items: model.searchResults.albums) { album in
+                Button {
+                    Task { await model.openAlbum(album) }
+                } label: {
+                    MediaCard(
+                        title: album.name,
+                        subtitle: album.artist,
+                        artworkURL: album.artworkURL,
+                        placeholderSymbol: "square.stack",
+                        side: 120
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        case .playlist:
+            CardGrid(items: model.searchResults.playlists) { playlist in
+                Button {
+                    Task { await model.open(playlist) }
+                } label: {
+                    MediaCard(
+                        title: playlist.name,
+                        subtitle: "\(playlist.creator) · \(playlist.trackCount) 首",
+                        artworkURL: playlist.artworkURL,
+                        placeholderSymbol: "music.note.list",
+                        side: 120
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        case .singer:
+            CardGrid(items: model.searchResults.artists) { artist in
+                Button {
+                    Task { await model.open(artist) }
+                } label: {
+                    MediaCard(
+                        title: artist.name,
+                        subtitle: "\(artist.songCount) 首 · \(artist.albumCount) 张专辑",
+                        artworkURL: artist.artworkURL,
+                        placeholderSymbol: "person.crop.circle",
+                        side: 120
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
-            Text("搜索")
-                .font(.system(size: 13, weight: .semibold))
-            if !model.results.isEmpty {
-                Text("\(model.results.count) 首")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            // Type selector first: it decides what the query means.
+            Picker("", selection: $model.searchKind) {
+                ForEach(SearchKind.allCases) { kind in
+                    Text(kind.label).tag(kind)
+                }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+
             Spacer()
+
             HStack(spacing: 5) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                TextField("搜索歌曲", text: $model.query)
+                TextField("搜索\(model.searchKind.label)", text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
-                    .frame(width: 170)
+                    .frame(width: 190)
                     .focused($searchFocused)
                     .onSubmit { Task { await model.runSearch() } }
                 if !model.query.isEmpty {
@@ -278,13 +339,24 @@ private struct SearchPane: View {
 // MARK: - Library panes
 
 private struct TracksPane: View {
+    enum Context { case library, searchDetail }
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
+    var context: Context = .library
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if model.selectedPlaylist != nil || model.selectedAlbum != nil {
+                if context == .searchDetail {
+                    Button {
+                        model.clearSearchDetail()
+                    } label: {
+                        Label("返回搜索", systemImage: "chevron.left")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                } else if model.selectedPlaylist != nil || model.selectedAlbum != nil {
                     Button {
                         model.closeDetail()
                     } label: {
@@ -327,7 +399,7 @@ private struct TracksPane: View {
                     player: player,
                     selectedID: $model.selectedTrackID,
                     showsDiscs: model.selectedAlbum != nil,
-                    showsAlbum: model.selectedPlaylist == nil
+                    showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil
                 )
             }
         }
@@ -335,16 +407,20 @@ private struct TracksPane: View {
 
     private var title: String {
         if let playlist = model.selectedPlaylist { return playlist.name }
+        if let playlist = model.searchPlaylistDetail { return playlist.name }
+        if let artist = model.searchArtistDetail { return artist.name }
         if let album = model.selectedAlbum { return album.name }
         return model.section.title
     }
 
     private var emptyTitle: String {
-        model.section == .liked ? "「我喜欢」里还没有歌曲" : "这里是空的"
+        if context == .searchDetail { return "这里没有歌曲" }
+        return model.section == .liked ? "「我喜欢」里还没有歌曲" : "这里是空的"
     }
 
     private var emptyMessage: String {
-        model.section == .liked
+        if context == .searchDetail { return "这个专辑、歌单或歌手没有返回可播放的曲目。" }
+        return model.section == .liked
             ? "在 QQ 音乐里点红心的歌曲会出现在这里。"
             : "换一个歌单看看，或者检查登录状态。"
     }
@@ -373,33 +449,20 @@ private struct PlaylistsPane: View {
             } else if model.playlists.isEmpty {
                 StatusPane(title: "还没有歌单", message: "在 QQ 音乐里创建或收藏歌单后会出现在这里。", symbol: "music.note.list")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.playlists) { playlist in
-                            Button {
-                                Task { await model.open(playlist) }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: playlist.isLikedSongs ? "heart.fill" : "music.note.list")
-                                        .font(.system(size: 12))
-                                        .frame(width: 18)
-                                        .foregroundStyle(playlist.isLikedSongs ? Color.accentColor : .secondary)
-                                    Text(playlist.name)
-                                        .font(.system(size: 12.5))
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text("\(playlist.trackCount) 首")
-                                        .font(.system(size: 11).monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 14)
-                                .frame(height: 30)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            Divider().opacity(0.35)
-                        }
+                CardGrid(items: model.playlists) { playlist in
+                    Button {
+                        Task { await model.open(playlist) }
+                    } label: {
+                        MediaCard(
+                            title: playlist.name,
+                            subtitle: "\(playlist.trackCount) 首",
+                            artworkURL: nil,
+                            placeholderSymbol: playlist.isLikedSongs ? "heart.fill" : "music.note.list",
+                            side: 120,
+                            isSelected: model.selectedPlaylist?.id == playlist.id
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -429,56 +492,124 @@ private struct AlbumsPane: View {
             } else if model.albums.isEmpty {
                 StatusPane(title: "还没有收藏的专辑", message: "在 QQ 音乐里收藏专辑后会出现在这里。", symbol: "square.stack")
             } else {
+                CardGrid(items: model.albums) { album in
+                    Button {
+                        Task { await model.open(album) }
+                    } label: {
+                        MediaCard(
+                            title: album.name,
+                            subtitle: album.artist,
+                            artworkURL: album.artworkURL,
+                            placeholderSymbol: "square.stack",
+                            side: 120,
+                            isSelected: model.selectedAlbum?.id == album.id
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Queue
+
+private struct QueuePane: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var player: Player
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text("播放队列").font(.system(size: 13, weight: .semibold))
+                if !player.queue.isEmpty {
+                    Text("\(player.queue.count) 首").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !player.queue.isEmpty {
+                    Button("清空") { player.clearQueue() }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            Divider()
+
+            if player.queue.isEmpty {
+                StatusPane(
+                    title: "队列是空的",
+                    message: "双击歌曲列表里的任意一首，整张列表会成为播放队列。",
+                    symbol: "list.bullet"
+                )
+            } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(model.albums) { album in
-                            Button {
-                                Task { await model.open(album) }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    AsyncImage(url: album.artworkURL) { phase in
-                                        ZStack {
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .fill(Color.primary.opacity(0.08))
-                                            if let image = phase.image {
-                                                image.resizable().scaledToFill()
-                                            } else {
-                                                Image(systemName: "square.stack")
-                                                    .font(.system(size: 11))
-                                                    .foregroundStyle(.tertiary)
-                                            }
-                                        }
-                                    }
-                                    .frame(width: 30, height: 30)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(album.name)
-                                            .font(.system(size: 12.5))
-                                            .lineLimit(1)
-                                        Text(album.artist)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                    if album.trackCount > 0 {
-                                        Text("\(album.trackCount) 首")
-                                            .font(.system(size: 11).monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(.horizontal, 14)
-                                .frame(height: 44)
-                                .contentShape(Rectangle())
+                        ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                            QueueRow(
+                                index: index,
+                                track: track,
+                                isCurrent: player.currentIndex == index,
+                                isPlaying: player.currentIndex == index && player.isPlaying,
+                                isSelected: model.selectedTrackID == track.id
+                            )
+                            .onTapGesture(count: 2) {
+                                model.selectedTrackID = track.id
+                                player.play(tracks: player.queue, startingAt: index)
                             }
-                            .buttonStyle(.plain)
+                            .onTapGesture { model.selectedTrackID = track.id }
+                            .contextMenu {
+                                Button("移除") { player.removeFromQueue(at: IndexSet(integer: index)) }
+                                Button("播放这首") { player.play(tracks: player.queue, startingAt: index) }
+                            }
                             Divider().opacity(0.35)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private struct QueueRow: View {
+    let index: Int
+    let track: Track
+    let isCurrent: Bool
+    let isPlaying: Bool
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if isCurrent {
+                    Image(systemName: isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text("\(index + 1)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: 22, alignment: .trailing)
+
+            Text(track.title)
+                .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(track.artist)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 150, alignment: .leading)
+            Text(track.durationText)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 29)
+        .background(isSelected ? Color.accentColor.opacity(0.14) : (isCurrent ? Color.primary.opacity(0.06) : .clear))
+        .contentShape(Rectangle())
     }
 }
 
