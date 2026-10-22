@@ -67,6 +67,17 @@ final class AppModel: ObservableObject {
     var hasSearchDetail: Bool {
         selectedAlbum != nil || searchPlaylistDetail != nil || searchArtistDetail != nil
     }
+
+    enum ArtistTab: String, CaseIterable, Identifiable {
+        case songs, albums
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .songs: return "热门歌曲"
+            case .albums: return "专辑"
+            }
+        }
+    }
     @Published private(set) var isSearching = false
     @Published private(set) var searchError: String?
     @Published private(set) var connection: PlatformConnectionState = .unknown
@@ -86,6 +97,14 @@ final class AppModel: ObservableObject {
     /// Detail views reached from search, which are not part of the user's own library.
     @Published private(set) var searchPlaylistDetail: SearchPlaylist?
     @Published private(set) var searchArtistDetail: Artist?
+    /// Artist detail content.
+    @Published private(set) var artistSongs: [Track] = []
+    @Published private(set) var artistAlbums: [Album] = []
+    @Published var artistTab: ArtistTab = .songs
+    /// Optimistic like state, keyed by track id. Writes are applied here first so the heart
+    /// responds instantly; a failed write reverts it and reports why.
+    @Published private(set) var likeStates: [String: Bool] = [:]
+    @Published private(set) var writeError: String?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -235,6 +254,7 @@ final class AppModel: ObservableObject {
         switch section {
         case .liked:
             await loadTracks { try await platform.likedSongs() }
+            primeLikes(from: libraryTracks)
         case .playlists:
             libraryTracks = []
         case .albums:
@@ -514,15 +534,85 @@ final class AppModel: ObservableObject {
         await loadTracks { try await platform.tracks(inSearchPlaylist: playlist) }
     }
 
-    /// An artist's songs.
+    /// An artist's detail page: profile, top songs and albums.
     func open(_ artist: Artist) async {
         section = .search
         pane = .list
         selectedPlaylist = nil
         selectedAlbum = nil
         albumDetails = nil
+        searchPlaylistDetail = nil
         searchArtistDetail = artist
-        await loadTracks { try await platform.songs(by: artist) }
+        artistTab = .songs
+        artistSongs = []
+        artistAlbums = []
+        libraryTracks = []
+        libraryError = nil
+        isLoadingLibrary = true
+        defer { isLoadingLibrary = false }
+        do {
+            async let detail = platform.artistDetail(artist)
+            async let songs = platform.songs(by: artist)
+            async let albums = platform.albums(by: artist)
+            searchArtistDetail = try await detail
+            artistSongs = try await songs
+            artistAlbums = try await albums
+            libraryTracks = artistSongs
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Writes
+
+    /// Toggles 我喜欢 for a track. Optimistic: the heart flips immediately, and flips back with a
+    /// visible message if QQ Music rejects the change.
+    func toggleLike(_ track: Track) async {
+        let current = likeStates[track.id] ?? false
+        let desired = !current
+        likeStates[track.id] = desired
+        writeError = nil
+        do {
+            try await platform.setLiked(desired, track: track)
+        } catch {
+            likeStates[track.id] = current
+            writeError = "红心更新失败：\(error.localizedDescription)"
+        }
+    }
+
+    func isLiked(_ track: Track) -> Bool {
+        likeStates[track.id] ?? false
+    }
+
+    /// Marks every track already in 我喜欢, so hearts render correctly without a per-row request.
+    func primeLikes(from tracks: [Track]) {
+        for track in tracks { likeStates[track.id] = true }
+    }
+
+    func clearWriteError() { writeError = nil }
+
+    /// Collects or uncollects an album from search results.
+    func toggleSubscription(_ album: Album) async {
+        writeError = nil
+        do {
+            try await platform.setSubscribed(true, album: album)
+            if !albums.contains(where: { $0.id == album.id }) {
+                albums.insert(album, at: 0)
+            }
+        } catch {
+            writeError = "收藏专辑失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Collects a playlist found by search.
+    func toggleSubscription(_ playlist: SearchPlaylist) async {
+        writeError = nil
+        do {
+            try await platform.setSubscribed(true, playlist: playlist)
+            await loadLibrary()
+        } catch {
+            writeError = "收藏歌单失败：\(error.localizedDescription)"
+        }
     }
 
     func openAlbum(_ album: Album) async {
@@ -545,6 +635,8 @@ final class AppModel: ObservableObject {
         searchPlaylistDetail = nil
         searchArtistDetail = nil
         albumDetails = nil
+        artistSongs = []
+        artistAlbums = []
         libraryTracks = []
         libraryError = nil
     }

@@ -367,6 +367,36 @@ struct SelfTest {
             ))
         }
 
+        // 6c5. Artist detail: profile, top songs and albums.
+        if model.connection.isConnected {
+            if let found = try? await model.platform.search("周杰伦", kind: .singer, page: 1),
+               let artist = found.artists.first {
+                await model.open(artist)
+                steps.append(Step(
+                    name: "artist-detail",
+                    ok: !model.artistSongs.isEmpty && !model.artistAlbums.isEmpty,
+                    detail: "\(model.searchArtistDetail?.name ?? "?"): \(model.artistSongs.count) songs, \(model.artistAlbums.count) albums, bio \(model.searchArtistDetail?.bio?.isEmpty == false ? "yes" : "no")"
+                ))
+                model.clearSearchDetail()
+            }
+        }
+
+        // 6c6. Write round-trip. Likes the track then puts it back, so the account ends unchanged.
+        if model.connection.isConnected, let track = model.results.first {
+            do {
+                try await model.platform.setLiked(true, track: track)
+                let liked = true
+                try await model.platform.setLiked(false, track: track)
+                steps.append(Step(
+                    name: "like-write",
+                    ok: liked,
+                    detail: "liked and unliked \(track.title), account restored"
+                ))
+            } catch {
+                steps.append(Step(name: "like-write", ok: false, detail: error.localizedDescription))
+            }
+        }
+
         // 6d. Audio quality: the API must report real files, not a fixed menu.
         if let track = model.results.first {
             let qualities = (try? await model.platform.availableQualities(for: track)) ?? []

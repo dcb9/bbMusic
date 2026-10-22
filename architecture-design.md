@@ -147,6 +147,15 @@ flowchart LR
 
 QQ 音乐其余位置不提供结构化的作曲家/作品号/演奏者字段。`TrackDisplay` 从现有字段**推导**：作品号（`Op.`/`BWV`/`KV`/`Hob.`/`D.`/`RV`/`WoO`/`S.`，含 `No.` 子编号）、演奏者（把合并的歌手字段按 `/ 、 ; &` 拆开）、以及是否古典（作品号、作品体裁词、或多位演奏者+长标题）。判断偏保守：它只影响一行的排布与是否显示两行，绝不影响播放或 scrobble；推不出来的字段保持原样，不凭空补作曲家。
 
+## 歌手详情与写操作
+
+**歌手接口的参数名不统一**，两个都踩过坑：`/singer/detail`、`/singer/songs` 读 `mid`（不是 `singermid`），而 `/getSingerAlbum` 的路径模板写着 `/:singermid?/:limit?/:page?`，**实际却只读查询参数**——把值放进路径会得到 `"no singermid"`。判断依据是看 handler 里 `queryRaw('…')` 的键名，而不是看路径模板。
+
+**写操作**（`/user/song/like`、`/user/album/subscribe`、`/user/playlist/subscribe`）是真实账号变更，因此：
+- 上游实现本身是**先读当前状态、已满足即成功**，所以重试不会把值翻回去；
+- 红心在界面上**先乐观翻转**，写入失败再翻回并显示原因——不假装成功；
+- 红心需要数字 `id`，而搜索结果里的 `id` 可能是 0，所以先经 `/song/batch` 解析真实 id。
+
 ## 音质与 MCP
 
 **音质**：`/getMusicPlay` 只说「这个档位拿不到链接」，不说「有哪些档位」。`/song/batch` 对每档回报真实文件大小，非零即存在——界面因此只列真实可用的档位。`AudioQuality` 枚举负责请求值（`320`/`128`/`m4a`/`flac`/`ape`），`deliveredQuality` 记录**上游实际给的**格式（从文件名推断），因为 `best` 可能降级。

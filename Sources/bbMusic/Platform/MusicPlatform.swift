@@ -107,6 +107,18 @@ protocol MusicPlatform: AnyObject, Sendable {
     func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track]
     /// An artist's songs.
     func songs(by artist: Artist) async throws -> [Track]
+    /// Full artist profile (name, counts, biography).
+    func artistDetail(_ artist: Artist) async throws -> Artist
+    /// An artist's albums.
+    func albums(by artist: Artist) async throws -> [Album]
+
+    // MARK: - Writes
+    //
+    // These change the user's account. Every implementation must read the current state first and
+    // treat "already in the desired state" as success, so a retry cannot flip a value back.
+    func setLiked(_ liked: Bool, track: Track) async throws
+    func setSubscribed(_ subscribed: Bool, album: Album) async throws
+    func setSubscribed(_ subscribed: Bool, playlist: SearchPlaylist) async throws
     /// Library reads. Each returns an empty list when the platform has nothing to show rather than
     /// failing, so the UI can render an honest empty state.
     func likedSongs() async throws -> [Track]
@@ -262,6 +274,26 @@ struct Artist: Identifiable, Hashable, Sendable {
     let songCount: Int
     let albumCount: Int
     let artworkURL: URL?
+    /// Biography, when the artist detail endpoint supplies one.
+    var bio: String?
+}
+
+/// Whether a track is in the account's 我喜欢.
+enum LikeState: Equatable, Sendable {
+    case liked
+    case notLiked
+    case unknown
+
+    var isLiked: Bool { self == .liked }
+}
+
+/// Whether an album or playlist is collected.
+enum SubscribeState: Equatable, Sendable {
+    case subscribed
+    case notSubscribed
+    case unknown
+
+    var isSubscribed: Bool { self == .subscribed }
 }
 
 /// One page of typed search results.

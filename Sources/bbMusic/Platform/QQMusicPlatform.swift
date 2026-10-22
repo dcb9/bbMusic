@@ -206,16 +206,117 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
     }
 
     func songs(by artist: Artist) async throws -> [Track] {
+        // The route reads `mid`, not `singermid`; the latter silently fails validation.
         let data = try await get("/singer/songs", query: [
-            .init(name: "singermid", value: artist.id),
+            .init(name: "mid", value: artist.id),
             .init(name: "page", value: "1"),
             .init(name: "limit", value: "100"),
         ])
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        let items = (root["items"] as? [[String: Any]])
+        let items = (root["songs"] as? [[String: Any]])
+            ?? (root["items"] as? [[String: Any]])
             ?? ((root["data"] as? [String: Any])?["list"] as? [[String: Any]])
             ?? []
         return items.compactMap(Self.track(from:))
+    }
+
+    func artistDetail(_ artist: Artist) async throws -> Artist {
+        let data = try await get("/singer/detail", query: [.init(name: "mid", value: artist.id)])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let singer = root["singer"] as? [String: Any]
+        else { return artist }
+        return Artist(
+            id: artist.id,
+            name: (singer["name"] as? String) ?? artist.name,
+            songCount: (singer["songNum"] as? Int) ?? artist.songCount,
+            albumCount: (singer["albumNum"] as? Int) ?? artist.albumCount,
+            artworkURL: (singer["pic"] as? String).flatMap(Self.secureImageURL) ?? artist.artworkURL,
+            bio: (singer["desc"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    func albums(by artist: Artist) async throws -> [Album] {
+        // Despite the `/:singermid?/:limit?/:page?` path template, the handler reads *query*
+        // parameters — passing them in the path returns `no singermid`.
+        let data = try await get("/getSingerAlbum", query: [
+            .init(name: "singermid", value: artist.id),
+            .init(name: "limit", value: "50"),
+            .init(name: "page", value: "0"),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let response = root["response"] as? [String: Any],
+              let payload = response["singer"] as? [String: Any],
+              let inner = payload["data"] as? [String: Any],
+              let list = inner["albumList"] as? [[String: Any]]
+        else { return [] }
+        return list.compactMap { entry in
+            guard let mid = entry["albumMid"] as? String, !mid.isEmpty else { return nil }
+            var year: Int?
+            if let raw = entry["publishDate"] as? String, let value = Int(raw.prefix(4)), value > 1000 {
+                year = value
+            }
+            return Album(
+                id: mid,
+                name: (entry["albumName"] as? String) ?? "未知专辑",
+                artist: (entry["singerName"] as? String) ?? artist.name,
+                trackCount: (entry["totalNum"] as? Int) ?? 0,
+                artworkURL: URL(string: "https://y.gtimg.cn/music/photo_new/T002R300x300M000\(mid).jpg"),
+                year: year
+            )
+        }
+    }
+
+    // MARK: - Writes
+
+    func setLiked(_ liked: Bool, track: Track) async throws {
+        // The API wants both the numeric id and the mid; `id` comes back as 0 in some listings, so
+        // resolve it from the song detail endpoint first.
+        let numericID = try await songNumericID(for: track)
+        let body: [String: Any] = [
+            "song": ["id": numericID, "mid": track.id, "type": 0],
+            "liked": liked,
+        ]
+        try await postJSON("/user/song/like", body: body)
+    }
+
+    func setSubscribed(_ subscribed: Bool, album: Album) async throws {
+        try await postJSON("/user/album/subscribe", body: ["id": album.id, "subscribed": subscribed])
+    }
+
+    func setSubscribed(_ subscribed: Bool, playlist: SearchPlaylist) async throws {
+        guard let tid = Int(playlist.id) else {
+            throw PlatformError("歌单 id 不是数字，无法收藏")
+        }
+        try await postJSON("/user/playlist/subscribe", body: ["tid": tid, "subscribed": subscribed])
+    }
+
+    private func songNumericID(for track: Track) async throws -> Int {
+        let body: [String: Any] = ["songs": [["mid": track.id]]]
+        let data = try await postJSON("/song/batch", body: body)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = root["results"] as? [[String: Any]],
+              let first = results.first,
+              let song = first["song"] as? [String: Any],
+              let id = song["id"] as? Int, id > 0
+        else {
+            throw PlatformError("无法解析歌曲 id，暂时不能改红心")
+        }
+        return id
+    }
+
+    @discardableResult
+    private func postJSON(_ path: String, body: [String: Any]) async throws -> Data {
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else {
+            throw PlatformError("请求体无效")
+        }
+        let data = try await post(path, body: payload)
+        // A write that reports an error in a 200 body must not be treated as success.
+        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let code = root["code"] as? Int, code >= 400 {
+            let message = (root["message"] as? String) ?? "操作失败（code \(code)）"
+            throw PlatformError(message)
+        }
+        return data
     }
 
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource {

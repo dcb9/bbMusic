@@ -42,6 +42,8 @@ struct RootView: View {
             }
         } else if model.showQueue {
             QueuePane(model: model, player: player)
+        } else if model.section == .search, model.searchArtistDetail != nil {
+            ArtistDetailPane(model: model, player: player)
         } else if model.section == .search, model.hasSearchDetail {
             TracksPane(model: model, player: player, context: .searchDetail)
         } else if model.section == .search {
@@ -182,6 +184,27 @@ private struct SearchPane: View {
             Divider()
             if let notice = player.notice {
                 NoticeBar(text: notice)
+            }
+            if let writeError = model.writeError {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                    Text(writeError)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        model.clearWriteError()
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Color.red.opacity(0.07))
             }
             if model.searchResults.isEmpty, model.isSearching {
                 // Only before the first page arrives; after that the list stays put and grows.
@@ -354,39 +377,59 @@ private struct SearchPane: View {
                 tracks: model.filteredSongs,
                 player: player,
                 selectedID: $model.selectedTrackID,
-                onReachEnd: autoLoad
+                onReachEnd: autoLoad,
+                isLiked: model.isLiked,
+                onToggleLike: { track in Task { await model.toggleLike(track) } }
             )
         case .album:
             CardGrid(items: model.filteredAlbums, onReachEnd: autoLoad) { album in
-                Button {
-                    Task { await model.openAlbum(album) }
-                } label: {
-                    MediaCard(
-                        title: album.name,
-                        // Year first: on a classical catalogue it is often the only thing that
-                        // distinguishes two recordings of the same work.
-                        subtitle: album.year.map { "\($0) · \(album.artist)" } ?? album.artist,
-                        artworkURL: album.artworkURL,
-                        placeholderSymbol: "square.stack",
-                        side: 120
-                    )
+                VStack(spacing: 4) {
+                    Button {
+                        Task { await model.openAlbum(album) }
+                    } label: {
+                        MediaCard(
+                            title: album.name,
+                            // Year first: on a classical catalogue it is often the only thing that
+                            // distinguishes two recordings of the same work.
+                            subtitle: album.year.map { "\($0) · \(album.artist)" } ?? album.artist,
+                            artworkURL: album.artworkURL,
+                            placeholderSymbol: "square.stack",
+                            side: 120
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    Button("收藏专辑") {
+                        Task { await model.toggleSubscription(album) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .leading)
                 }
-                .buttonStyle(.plain)
             }
         case .playlist:
             CardGrid(items: model.searchResults.playlists, onReachEnd: autoLoad) { playlist in
-                Button {
-                    Task { await model.open(playlist) }
-                } label: {
-                    MediaCard(
-                        title: playlist.name,
-                        subtitle: "\(playlist.creator) · \(playlist.trackCount) 首",
-                        artworkURL: playlist.artworkURL,
-                        placeholderSymbol: "music.note.list",
-                        side: 120
-                    )
+                VStack(spacing: 4) {
+                    Button {
+                        Task { await model.open(playlist) }
+                    } label: {
+                        MediaCard(
+                            title: playlist.name,
+                            subtitle: "\(playlist.creator) · \(playlist.trackCount) 首",
+                            artworkURL: playlist.artworkURL,
+                            placeholderSymbol: "music.note.list",
+                            side: 120
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    Button("收藏歌单") {
+                        Task { await model.toggleSubscription(playlist) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .leading)
                 }
-                .buttonStyle(.plain)
             }
         case .singer:
             CardGrid(items: model.searchResults.artists, onReachEnd: autoLoad) { artist in
@@ -520,7 +563,9 @@ private struct TracksPane: View {
                     player: player,
                     selectedID: $model.selectedTrackID,
                     showsDiscs: model.selectedAlbum != nil,
-                    showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil
+                    showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil,
+                    isLiked: model.isLiked,
+                    onToggleLike: { track in Task { await model.toggleLike(track) } }
                 )
             }
         }
@@ -631,6 +676,122 @@ private struct AlbumsPane: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Artist detail
+
+private struct ArtistDetailPane: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var player: Player
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            if let error = model.libraryError {
+                StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
+            } else if model.isLoadingLibrary {
+                StatusPane(title: "载入中…", message: nil, symbol: nil)
+            } else {
+                switch model.artistTab {
+                case .songs:
+                    if model.artistSongs.isEmpty {
+                        StatusPane(title: "没有取到歌曲", message: "这个歌手可能没有公开的曲目。", symbol: "music.note")
+                    } else {
+                        TrackList(
+                            tracks: model.artistSongs,
+                            player: player,
+                            selectedID: $model.selectedTrackID,
+                            isLiked: model.isLiked,
+                            onToggleLike: { track in Task { await model.toggleLike(track) } }
+                        )
+                    }
+                case .albums:
+                    if model.artistAlbums.isEmpty {
+                        StatusPane(title: "没有取到专辑", message: "这个歌手可能没有公开的专辑。", symbol: "square.stack")
+                    } else {
+                        CardGrid(items: model.artistAlbums) { album in
+                            Button {
+                                Task { await model.openAlbum(album) }
+                            } label: {
+                                MediaCard(
+                                    title: album.name,
+                                    subtitle: album.year.map { "\($0) · \(album.artist)" } ?? album.artist,
+                                    artworkURL: album.artworkURL,
+                                    placeholderSymbol: "square.stack",
+                                    side: 120
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    model.clearSearchDetail()
+                } label: {
+                    Label("返回搜索", systemImage: "chevron.left")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                AsyncImage(url: model.searchArtistDetail?.artworkURL) { phase in
+                    ZStack {
+                        Circle().fill(Color.primary.opacity(0.08))
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "person.crop.circle")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .frame(width: 64, height: 64)
+                .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.searchArtistDetail?.name ?? "")
+                        .font(.system(size: 15, weight: .semibold))
+                    if let artist = model.searchArtistDetail {
+                        Text("\(artist.songCount) 首 · \(artist.albumCount) 张专辑")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let bio = model.searchArtistDetail?.bio, !bio.isEmpty {
+                        Text(bio)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer()
+            }
+
+            Picker("", selection: $model.artistTab) {
+                ForEach(AppModel.ArtistTab.allCases) { tab in
+                    Text(tab.label).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 220)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 9)
+        .padding(.bottom, 8)
     }
 }
 
@@ -755,6 +916,9 @@ private struct TrackList: View {
     var showsAlbum: Bool = true
     /// Called when the last row comes into view; nil disables infinite scrolling.
     var onReachEnd: (() -> Void)?
+    /// Like state lookup, supplied by the model so rows stay dumb.
+    var isLiked: (Track) -> Bool = { _ in false }
+    var onToggleLike: (Track) -> Void = { _ in }
 
     var body: some View {
         ScrollView {
@@ -775,7 +939,9 @@ private struct TrackList: View {
                         isCurrent: player.currentTrack?.id == track.id,
                         isPlaying: player.currentTrack?.id == track.id && player.isPlaying,
                         isSelected: selectedID == track.id,
-                        showsAlbum: showsAlbum
+                        showsAlbum: showsAlbum,
+                        isLiked: isLiked(track),
+                        onToggleLike: { onToggleLike(track) }
                     )
                     // `.simultaneousGesture` instead of two `onTapGesture`s: stacking a single- and a
                     // double-tap gesture makes SwiftUI wait for the single-tap to fail before it can
@@ -821,6 +987,8 @@ private struct TrackRow: View {
     /// Album column. Hidden inside a playlist, where every row would repeat the same or an
     /// irrelevant album; shown in search results and on album pages.
     var showsAlbum: Bool = true
+    var isLiked: Bool = false
+    var onToggleLike: () -> Void = {}
 
     var body: some View {
         let info = TrackDisplay.info(for: track)
@@ -869,6 +1037,17 @@ private struct TrackRow: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(width: 160, alignment: .leading)
             }
+
+            Button {
+                onToggleLike()
+            } label: {
+                Image(systemName: isLiked ? "heart.fill" : "heart")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isLiked ? Color.accentColor : Color.secondary.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .frame(width: 20)
+            .help(isLiked ? "取消红心" : "加入我喜欢")
 
             Text(track.durationText)
                 .font(.system(size: 11).monospacedDigit())
