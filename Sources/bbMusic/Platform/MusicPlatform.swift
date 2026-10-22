@@ -20,6 +20,9 @@ struct Track: Identifiable, Codable, Hashable, Sendable {
     var work: String?
     /// Disc label ("Disc 1") for multi-disc albums.
     var disc: String?
+    /// Artist and album identifiers, so a row can link through to their pages.
+    var artistID: String?
+    var albumID: String?
     /// Publication year from the search result, when the API reports one.
     var year: Int?
     /// Composer parsed from the result's description ("作曲: …"). Only classical results carry it.
@@ -111,6 +114,12 @@ protocol MusicPlatform: AnyObject, Sendable {
     func artistDetail(_ artist: Artist) async throws -> Artist
     /// An artist's albums.
     func albums(by artist: Artist) async throws -> [Album]
+    /// The account's daily recommendation (30 tracks).
+    func dailySongs() async throws -> [Track]
+    /// All charts, grouped.
+    func toplists() async throws -> [Toplist]
+    /// The tracks of one chart.
+    func toplistTracks(_ toplist: Toplist) async throws -> [Track]
 
     // MARK: - Writes
     //
@@ -276,6 +285,18 @@ struct Artist: Identifiable, Hashable, Sendable {
     let artworkURL: URL?
     /// Biography, when the artist detail endpoint supplies one.
     var bio: String?
+}
+
+/// One chart, as listed by the charts index.
+struct Toplist: Identifiable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let intro: String
+    let trackCount: Int
+    let updateTime: String?
+    let artworkURL: URL?
+    /// Chart groups ("地区榜", "特色榜", "全球榜").
+    let group: String
 }
 
 /// Whether a track is in the account's 我喜欢.

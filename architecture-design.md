@@ -147,6 +147,12 @@ flowchart LR
 
 QQ 音乐其余位置不提供结构化的作曲家/作品号/演奏者字段。`TrackDisplay` 从现有字段**推导**：作品号（`Op.`/`BWV`/`KV`/`Hob.`/`D.`/`RV`/`WoO`/`S.`，含 `No.` 子编号）、演奏者（把合并的歌手字段按 `/ 、 ; &` 拆开）、以及是否古典（作品号、作品体裁词、或多位演奏者+长标题）。判断偏保守：它只影响一行的排布与是否显示两行，绝不影响播放或 scrobble；推不出来的字段保持原样，不凭空补作曲家。
 
+## 每日推荐与排行榜
+
+`/user/daily-songs` 返回 30 首（需登录）；`/recommend/toplists` 返回**分组**结构（地区榜/特色榜/全球榜，共 24 个榜单），每榜带封面、简介、曲数与更新时间；`/recommend/toplist?id=` 取该榜曲目。榜单本身匿名可读，只有每日推荐需要登录。
+
+曲目行要能点进歌手与专辑，因此 `Track` 额外携带 `artistID`（singer 数组首个非空 `mid`）与 `albumID`（`album.mid`）。没有 id 的行不可点击——不给一个点了没反应的链接。
+
 ## 歌手详情与写操作
 
 **歌手接口的参数名不统一**，两个都踩过坑：`/singer/detail`、`/singer/songs` 读 `mid`（不是 `singermid`），而 `/getSingerAlbum` 的路径模板写着 `/:singermid?/:limit?/:page?`，**实际却只读查询参数**——把值放进路径会得到 `"no singermid"`。判断依据是看 handler 里 `queryRaw('…')` 的键名，而不是看路径模板。

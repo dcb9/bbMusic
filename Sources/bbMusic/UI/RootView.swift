@@ -42,6 +42,8 @@ struct RootView: View {
             }
         } else if model.showQueue {
             QueuePane(model: model, player: player)
+        } else if model.section == .charts, model.selectedToplist == nil {
+            ChartsPane(model: model)
         } else if model.section == .search, model.searchArtistDetail != nil {
             ArtistDetailPane(model: model, player: player)
         } else if model.section == .search, model.hasSearchDetail {
@@ -84,7 +86,7 @@ private struct SidebarView: View {
             // No platform banner: the account state belongs at the bottom, next to the other one.
             // 每日推荐 and 排行榜 were never implemented; their entries only ever led to a
             // placeholder, so they are gone rather than left as dead ends.
-            section("浏览", items: [.search])
+            section("浏览", items: [.search, .daily, .charts])
             section("我的音乐", items: [.liked, .playlists, .albums])
 
             Spacer()
@@ -379,7 +381,9 @@ private struct SearchPane: View {
                 selectedID: $model.selectedTrackID,
                 onReachEnd: autoLoad,
                 isLiked: model.isLiked,
-                onToggleLike: { track in Task { await model.toggleLike(track) } }
+                onToggleLike: { track in Task { await model.toggleLike(track) } },
+                onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
+                onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
             )
         case .album:
             CardGrid(items: model.filteredAlbums, onReachEnd: autoLoad) { album in
@@ -520,7 +524,7 @@ private struct TracksPane: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                } else if model.selectedPlaylist != nil || model.selectedAlbum != nil {
+                } else if model.selectedPlaylist != nil || model.selectedAlbum != nil || model.selectedToplist != nil {
                     Button {
                         model.closeDetail()
                     } label: {
@@ -565,13 +569,17 @@ private struct TracksPane: View {
                     showsDiscs: model.selectedAlbum != nil,
                     showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil,
                     isLiked: model.isLiked,
-                    onToggleLike: { track in Task { await model.toggleLike(track) } }
+                    onToggleLike: { track in Task { await model.toggleLike(track) } },
+                    onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
+                    onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
                 )
             }
         }
     }
 
     private var title: String {
+        if let toplist = model.selectedToplist { return toplist.title }
+        if model.section == .daily { return "每日推荐" }
         if let playlist = model.selectedPlaylist { return playlist.name }
         if let playlist = model.searchPlaylistDetail { return playlist.name }
         if let artist = model.searchArtistDetail { return artist.name }
@@ -580,6 +588,7 @@ private struct TracksPane: View {
     }
 
     private var emptyTitle: String {
+        if model.section == .daily { return "今天没有推荐" }
         if context == .searchDetail { return "这里没有歌曲" }
         return model.section == .liked ? "「我喜欢」里还没有歌曲" : "这里是空的"
     }
@@ -679,6 +688,50 @@ private struct AlbumsPane: View {
     }
 }
 
+// MARK: - Charts
+
+private struct ChartsPane: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("排行榜").font(.system(size: 13, weight: .semibold))
+                if !model.toplists.isEmpty {
+                    Text("\(model.toplists.count) 个").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            Divider()
+
+            if model.isLoadingLibrary {
+                StatusPane(title: "载入中…", message: nil, symbol: nil)
+            } else if let error = model.libraryError {
+                StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
+            } else if model.toplists.isEmpty {
+                StatusPane(title: "没有取到排行榜", message: "检查网络或登录状态。", symbol: "list.number")
+            } else {
+                CardGrid(items: model.toplists) { toplist in
+                    Button {
+                        Task { await model.open(toplist) }
+                    } label: {
+                        MediaCard(
+                            title: toplist.title,
+                            subtitle: "\(toplist.group) · \(toplist.trackCount) 首",
+                            artworkURL: toplist.artworkURL,
+                            placeholderSymbol: "list.number",
+                            side: 120
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Artist detail
 
 private struct ArtistDetailPane: View {
@@ -704,7 +757,9 @@ private struct ArtistDetailPane: View {
                             player: player,
                             selectedID: $model.selectedTrackID,
                             isLiked: model.isLiked,
-                            onToggleLike: { track in Task { await model.toggleLike(track) } }
+                            onToggleLike: { track in Task { await model.toggleLike(track) } },
+                            onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
+                            onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
                         )
                     }
                 case .albums:
@@ -919,6 +974,8 @@ private struct TrackList: View {
     /// Like state lookup, supplied by the model so rows stay dumb.
     var isLiked: (Track) -> Bool = { _ in false }
     var onToggleLike: (Track) -> Void = { _ in }
+    var onOpenArtist: (String, String) -> Void = { _, _ in }
+    var onOpenAlbum: (String, String) -> Void = { _, _ in }
 
     var body: some View {
         ScrollView {
@@ -941,7 +998,9 @@ private struct TrackList: View {
                         isSelected: selectedID == track.id,
                         showsAlbum: showsAlbum,
                         isLiked: isLiked(track),
-                        onToggleLike: { onToggleLike(track) }
+                        onToggleLike: { onToggleLike(track) },
+                        onOpenArtist: onOpenArtist,
+                        onOpenAlbum: onOpenAlbum
                     )
                     // `.simultaneousGesture` instead of two `onTapGesture`s: stacking a single- and a
                     // double-tap gesture makes SwiftUI wait for the single-tap to fail before it can
@@ -989,6 +1048,8 @@ private struct TrackRow: View {
     var showsAlbum: Bool = true
     var isLiked: Bool = false
     var onToggleLike: () -> Void = {}
+    var onOpenArtist: (String, String) -> Void = { _, _ in }
+    var onOpenAlbum: (String, String) -> Void = { _, _ in }
 
     var body: some View {
         let info = TrackDisplay.info(for: track)
@@ -1022,20 +1083,36 @@ private struct TrackRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(track.artist)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 150, alignment: .leading)
-
-            if showsAlbum {
-                Text(track.album)
+            // Artist and album link through to their pages, when the track carries an id for them.
+            Button {
+                if let id = track.artistID { onOpenArtist(id, track.artist) }
+            } label: {
+                Text(track.artist)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(track.artistID == nil ? Color.secondary : Color.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 160, alignment: .leading)
+                    .frame(width: 150, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(track.artistID == nil)
+            .onHover { inside in if inside, track.artistID != nil { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+
+            if showsAlbum {
+                Button {
+                    if let id = track.albumID { onOpenAlbum(id, track.album) }
+                } label: {
+                    Text(track.album)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 160, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(track.albumID == nil)
             }
 
             Button {

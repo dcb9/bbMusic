@@ -397,6 +397,40 @@ struct SelfTest {
             }
         }
 
+        // 6c7. Daily recommendation and charts.
+        if model.connection.isConnected {
+            let daily = (try? await model.platform.dailySongs()) ?? []
+            steps.append(Step(
+                name: "daily",
+                ok: !daily.isEmpty,
+                detail: "\(daily.count) tracks, first = \(daily.first?.title ?? "-")"
+            ))
+
+            let charts = (try? await model.platform.toplists()) ?? []
+            var chartTracks = 0
+            var chartName = "-"
+            if let first = charts.first {
+                chartName = first.title
+                chartTracks = ((try? await model.platform.toplistTracks(first)) ?? []).count
+            }
+            steps.append(Step(
+                name: "charts",
+                ok: !charts.isEmpty && chartTracks > 0,
+                detail: "\(charts.count) charts, \(chartName): \(chartTracks) tracks"
+            ))
+        }
+
+        // 6c8. Rows must carry the ids needed to link artist and album.
+        if let withIDs = model.results.first(where: { $0.artistID != nil && $0.albumID != nil }) {
+            steps.append(Step(
+                name: "row-links",
+                ok: true,
+                detail: "artistID + albumID present on \(withIDs.title.prefix(24))"
+            ))
+        } else if !model.results.isEmpty {
+            steps.append(Step(name: "row-links", ok: false, detail: "no result carried both ids"))
+        }
+
         // 6d. Audio quality: the API must report real files, not a fixed menu.
         if let track = model.results.first {
             let qualities = (try? await model.platform.availableQualities(for: track)) ?? []

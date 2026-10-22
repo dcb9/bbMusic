@@ -266,6 +266,46 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         }
     }
 
+    func dailySongs() async throws -> [Track] {
+        let data = try await get("/user/daily-songs", query: [])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let songs = root["songs"] as? [[String: Any]]
+        else { return [] }
+        return songs.compactMap(Self.track(from:))
+    }
+
+    func toplists() async throws -> [Toplist] {
+        let data = try await get("/recommend/toplists", query: [])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let groups = root["groups"] as? [[String: Any]]
+        else { return [] }
+        var result: [Toplist] = []
+        for group in groups {
+            let groupName = (group["name"] as? String) ?? ""
+            for entry in (group["toplists"] as? [[String: Any]]) ?? [] {
+                guard let id = entry["id"] as? Int else { continue }
+                result.append(Toplist(
+                    id: String(id),
+                    title: (entry["title"] as? String) ?? "未命名榜",
+                    intro: (entry["intro"] as? String) ?? "",
+                    trackCount: (entry["total"] as? Int) ?? 0,
+                    updateTime: entry["updateTime"] as? String,
+                    artworkURL: (entry["cover"] as? String).flatMap(Self.secureImageURL),
+                    group: groupName
+                ))
+            }
+        }
+        return result
+    }
+
+    func toplistTracks(_ toplist: Toplist) async throws -> [Track] {
+        let data = try await get("/recommend/toplist", query: [.init(name: "id", value: toplist.id)])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let songs = root["songs"] as? [[String: Any]]
+        else { return [] }
+        return songs.compactMap(Self.track(from:))
+    }
+
     // MARK: - Writes
 
     func setLiked(_ liked: Bool, track: Track) async throws {
@@ -613,6 +653,9 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             }
         }
 
+        let artistID = singers.compactMap { $0["mid"] as? String }.first { !$0.isEmpty }
+        let albumID = (albumDict?["mid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+
         return Track(
             id: mid,
             title: title,
@@ -624,6 +667,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             composer: nil,
             work: nil,
             disc: nil,
+            artistID: artistID,
+            albumID: albumID,
             year: year,
             composerCredit: composerCredit
         )

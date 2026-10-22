@@ -6,6 +6,8 @@ import Foundation
 final class AppModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case search
+        case daily
+        case charts
         case liked
         case playlists
         case albums
@@ -15,6 +17,8 @@ final class AppModel: ObservableObject {
         var title: String {
             switch self {
             case .search: return "搜索"
+            case .daily: return "每日推荐"
+            case .charts: return "排行榜"
             case .liked: return "我喜欢"
             case .playlists: return "歌单"
             case .albums: return "专辑"
@@ -24,6 +28,8 @@ final class AppModel: ObservableObject {
         var symbol: String {
             switch self {
             case .search: return "magnifyingglass"
+            case .daily: return "sun.max"
+            case .charts: return "list.number"
             case .liked: return "heart"
             case .playlists: return "music.note.list"
             case .albums: return "square.stack"
@@ -101,6 +107,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var artistSongs: [Track] = []
     @Published private(set) var artistAlbums: [Album] = []
     @Published var artistTab: ArtistTab = .songs
+    /// Daily recommendation and charts.
+    @Published private(set) var dailyTracks: [Track] = []
+    @Published private(set) var toplists: [Toplist] = []
+    @Published private(set) var selectedToplist: Toplist?
     /// Optimistic like state, keyed by track id. Writes are applied here first so the heart
     /// responds instantly; a failed write reverts it and reports why.
     @Published private(set) var likeStates: [String: Bool] = [:]
@@ -257,9 +267,14 @@ final class AppModel: ObservableObject {
             primeLikes(from: libraryTracks)
         case .playlists:
             libraryTracks = []
+        case .daily:
+            await loadTracks { try await platform.dailySongs() }
         case .albums:
             libraryTracks = []
-        default:
+        case .charts:
+            libraryTracks = []
+            await loadToplists()
+        case .search:
             libraryTracks = []
         }
     }
@@ -288,8 +303,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func loadToplists() async {
+        isLoadingLibrary = true
+        libraryError = nil
+        defer { isLoadingLibrary = false }
+        do {
+            toplists = try await platform.toplists()
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    func open(_ toplist: Toplist) async {
+        selectedToplist = toplist
+        await loadTracks { try await platform.toplistTracks(toplist) }
+    }
+
+    /// Opens the album of the currently playing/selected track from a row's album label.
+    func openAlbum(id: String, name: String) async {
+        await openAlbum(Album(id: id, name: name, artist: "", trackCount: 0, artworkURL: nil, year: nil))
+    }
+
+    /// Opens an artist page from a row's artist label. The counts and bio arrive with the detail.
+    func openArtist(id: String, name: String) async {
+        await open(Artist(id: id, name: name, songCount: 0, albumCount: 0, artworkURL: nil))
+    }
+
     /// Returns from a playlist/album detail to its list.
     func closeDetail() {
+        selectedToplist = nil
         selectedPlaylist = nil
         selectedAlbum = nil
         albumDetails = nil
@@ -653,6 +695,10 @@ final class AppModel: ObservableObject {
     func unsupportedMessage(for section: Section) -> String? {
         switch section {
         case .search:
+            return nil
+        case .daily:
+            return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取每日推荐。"
+        case .charts:
             return nil
         case .liked:
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取「我喜欢」。"
