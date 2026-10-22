@@ -85,10 +85,6 @@ private struct SidebarView: View {
             section("浏览", items: [.search])
             section("我的音乐", items: [.liked, .playlists, .albums])
 
-            if model.connection.isConnected, !model.playlists.isEmpty, model.section == .playlists {
-                playlistList
-            }
-
             Spacer()
 
             VStack(spacing: 0) {
@@ -112,37 +108,6 @@ private struct SidebarView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-    }
-
-    private var playlistList: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            ForEach(model.playlists) { playlist in
-                Button {
-                    Task { await model.open(playlist) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: playlist.isLikedSongs ? "heart" : "music.note.list")
-                            .font(.system(size: 10))
-                            .frame(width: 14)
-                            .foregroundStyle(model.selectedPlaylist?.id == playlist.id ? Color.accentColor : .secondary)
-                        Text(playlist.name)
-                            .font(.system(size: 11.5, weight: model.selectedPlaylist?.id == playlist.id ? .semibold : .regular))
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(model.selectedPlaylist?.id == playlist.id ? Color.primary.opacity(0.08) : .clear)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 5)
-            }
-        }
-        .padding(.top, 2)
     }
 
     private func statusRow(label: String, connected: Bool, action: @escaping () -> Void) -> some View {
