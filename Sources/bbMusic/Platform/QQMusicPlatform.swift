@@ -298,12 +298,16 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return result
     }
 
-    func toplistTracks(_ toplist: Toplist) async throws -> [Track] {
-        let data = try await get("/recommend/toplist", query: [.init(name: "id", value: toplist.id)])
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let songs = root["songs"] as? [[String: Any]]
-        else { return [] }
-        return songs.compactMap(Self.track(from:))
+    func toplistTracks(_ toplist: Toplist, offset: Int = 0) async throws -> (tracks: [Track], total: Int) {
+        // The chart endpoint pages by track offset and returns 20 at a time regardless of `limit`.
+        let data = try await get("/recommend/toplist", query: [
+            .init(name: "id", value: toplist.id),
+            .init(name: "offset", value: String(offset)),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], 0) }
+        let songs = (root["songs"] as? [[String: Any]]) ?? []
+        let total = ((root["toplist"] as? [String: Any])?["total"] as? Int) ?? toplist.trackCount
+        return (songs.compactMap(Self.track(from:)), total)
     }
 
     // MARK: - Writes

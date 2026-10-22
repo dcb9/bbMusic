@@ -411,12 +411,33 @@ struct SelfTest {
             var chartName = "-"
             if let first = charts.first {
                 chartName = first.title
-                chartTracks = ((try? await model.platform.toplistTracks(first)) ?? []).count
+                chartTracks = ((try? await model.platform.toplistTracks(first, offset: 0))?.tracks ?? []).count
             }
             steps.append(Step(
                 name: "charts",
                 ok: !charts.isEmpty && chartTracks > 0,
                 detail: "\(charts.count) charts, \(chartName): \(chartTracks) tracks"
+            ))
+
+            // Charts page by offset; a 100-track chart must yield a second page.
+            if let first = charts.first(where: { $0.trackCount > 20 }) {
+                let page1 = (try? await model.platform.toplistTracks(first, offset: 0))?.tracks ?? []
+                let page2 = (try? await model.platform.toplistTracks(first, offset: page1.count))?.tracks ?? []
+                let distinct = Set(page1.map(\.id)).isDisjoint(with: Set(page2.map(\.id)))
+                steps.append(Step(
+                    name: "chart-paging",
+                    ok: page2.count > 0 && distinct,
+                    detail: "\(first.title): page1 \(page1.count), page2 \(page2.count), distinct \(distinct)"
+                ))
+            }
+
+            // Daily is a fixed 30-track set; paging params are ignored upstream, so the app must not
+            // pretend it can page. Recorded here so the limitation stays visible.
+            let dailyAgain = (try? await model.platform.dailySongs()) ?? []
+            steps.append(Step(
+                name: "daily-fixed",
+                ok: dailyAgain.count == daily.count,
+                detail: "\(daily.count) tracks, same set on repeat request (no paging upstream)"
             ))
         }
 

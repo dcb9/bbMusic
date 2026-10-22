@@ -111,10 +111,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var dailyTracks: [Track] = []
     @Published private(set) var toplists: [Toplist] = []
     @Published private(set) var selectedToplist: Toplist?
+    @Published private(set) var toplistTotal = 0
     /// Optimistic like state, keyed by track id. Writes are applied here first so the heart
     /// responds instantly; a failed write reverts it and reports why.
     @Published private(set) var likeStates: [String: Bool] = [:]
     @Published private(set) var writeError: String?
+    /// Short-lived confirmation for a successful write ("已收藏到 QQ 音乐").
+    @Published private(set) var writeSuccess: String?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -314,9 +317,43 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens a chart. Charts page by track offset, so the first page shows immediately and more
+    /// arrives when the list is scrolled to the end.
     func open(_ toplist: Toplist) async {
         selectedToplist = toplist
-        await loadTracks { try await platform.toplistTracks(toplist) }
+        libraryTracks = []
+        libraryError = nil
+        toplistTotal = toplist.trackCount
+        isLoadingLibrary = true
+        defer { isLoadingLibrary = false }
+        do {
+            let page = try await platform.toplistTracks(toplist, offset: 0)
+            libraryTracks = page.tracks
+            toplistTotal = page.total
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    /// Loads the next chart page when the list reaches its end.
+    func loadMoreToplistTracks() async {
+        guard let toplist = selectedToplist, !isLoadingMore else { return }
+        guard libraryTracks.count < toplistTotal else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let page = try await platform.toplistTracks(toplist, offset: libraryTracks.count)
+            let existing = Set(libraryTracks.map(\.id))
+            libraryTracks += page.tracks.filter { !existing.contains($0.id) }
+            toplistTotal = page.total
+        } catch {
+            libraryError = error.localizedDescription
+        }
+    }
+
+    /// Whether the open chart has more tracks to fetch.
+    var canLoadMoreToplist: Bool {
+        selectedToplist != nil && libraryTracks.count < toplistTotal
     }
 
     /// Opens the album of the currently playing/selected track from a row's album label.
@@ -616,11 +653,25 @@ final class AppModel: ObservableObject {
         writeError = nil
         do {
             try await platform.setLiked(desired, track: track)
+            flash(desired ? "已加入我喜欢 · \(track.title)" : "已从我喜欢移除 · \(track.title)")
         } catch {
             likeStates[track.id] = current
             writeError = "红心更新失败：\(error.localizedDescription)"
         }
     }
+
+    /// Shows a confirmation for a couple of seconds, then clears it.
+    private func flash(_ message: String) {
+        writeSuccess = message
+        successTask?.cancel()
+        successTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.writeSuccess = nil
+        }
+    }
+
+    private var successTask: Task<Void, Never>?
 
     func isLiked(_ track: Track) -> Bool {
         likeStates[track.id] ?? false
@@ -633,14 +684,17 @@ final class AppModel: ObservableObject {
 
     func clearWriteError() { writeError = nil }
 
-    /// Collects or uncollects an album from search results.
+    /// Collects an album. Already-collected albums are reported rather than silently re-sent.
     func toggleSubscription(_ album: Album) async {
         writeError = nil
+        if albums.contains(where: { $0.id == album.id }) {
+            flash("这张专辑已经在收藏里")
+            return
+        }
         do {
             try await platform.setSubscribed(true, album: album)
-            if !albums.contains(where: { $0.id == album.id }) {
-                albums.insert(album, at: 0)
-            }
+            albums.insert(album, at: 0)
+            flash("已收藏专辑 · \(album.name)")
         } catch {
             writeError = "收藏专辑失败：\(error.localizedDescription)"
         }
@@ -649,12 +703,22 @@ final class AppModel: ObservableObject {
     /// Collects a playlist found by search.
     func toggleSubscription(_ playlist: SearchPlaylist) async {
         writeError = nil
+        if playlists.contains(where: { $0.name == playlist.name }) {
+            flash("这个歌单已经在收藏里")
+            return
+        }
         do {
             try await platform.setSubscribed(true, playlist: playlist)
             await loadLibrary()
+            flash("已收藏歌单 · \(playlist.name)")
         } catch {
             writeError = "收藏歌单失败：\(error.localizedDescription)"
         }
+    }
+
+    /// Whether an album is already in the user's collection.
+    func isCollected(_ album: Album) -> Bool {
+        albums.contains { $0.id == album.id }
     }
 
     func openAlbum(_ album: Album) async {

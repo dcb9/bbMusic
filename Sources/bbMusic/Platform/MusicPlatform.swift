@@ -118,8 +118,8 @@ protocol MusicPlatform: AnyObject, Sendable {
     func dailySongs() async throws -> [Track]
     /// All charts, grouped.
     func toplists() async throws -> [Toplist]
-    /// The tracks of one chart.
-    func toplistTracks(_ toplist: Toplist) async throws -> [Track]
+    /// One page of a chart's tracks. `offset` is a track index, not a page number.
+    func toplistTracks(_ toplist: Toplist, offset: Int) async throws -> (tracks: [Track], total: Int)
 
     // MARK: - Writes
     //

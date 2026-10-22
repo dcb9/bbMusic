@@ -15,9 +15,25 @@ struct RootView: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            if let success = model.writeSuccess {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                    Text(success)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.green.opacity(0.08))
+                .transition(.opacity)
+            }
             Divider()
             PlayerBarView(model: model, player: player)
         }
+        .animation(.easeInOut(duration: 0.15), value: model.writeSuccess)
         .frame(minWidth: 820, minHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -402,7 +418,7 @@ private struct SearchPane: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    Button("收藏专辑") {
+                    Button("点击收藏专辑") {
                         Task { await model.toggleSubscription(album) }
                     }
                     .buttonStyle(.plain)
@@ -426,7 +442,7 @@ private struct SearchPane: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    Button("收藏歌单") {
+                    Button("点击收藏歌单") {
                         Task { await model.toggleSubscription(playlist) }
                     }
                     .buttonStyle(.plain)
@@ -542,6 +558,19 @@ private struct TracksPane: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if let album = model.selectedAlbum {
+                    Button(model.isCollected(album) ? "已收藏" : "点击收藏专辑") {
+                        Task { await model.toggleSubscription(album) }
+                    }
+                    .controlSize(.small)
+                    .disabled(model.isCollected(album))
+                }
+                if let playlist = model.searchPlaylistDetail {
+                    Button("点击收藏歌单") {
+                        Task { await model.toggleSubscription(playlist) }
+                    }
+                    .controlSize(.small)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
@@ -568,11 +597,27 @@ private struct TracksPane: View {
                     selectedID: $model.selectedTrackID,
                     showsDiscs: model.selectedAlbum != nil,
                     showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil,
+                    onReachEnd: model.canLoadMoreToplist ? { Task { await model.loadMoreToplistTracks() } } : nil,
                     isLiked: model.isLiked,
                     onToggleLike: { track in Task { await model.toggleLike(track) } },
                     onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
                     onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
                 )
+                if model.canLoadMoreToplist {
+                    HStack(spacing: 6) {
+                        if model.isLoadingMore {
+                            ProgressView().controlSize(.small).scaleEffect(0.6)
+                            Text("载入中…")
+                        } else {
+                            Text("已载入 \(model.libraryTracks.count) / \(model.toplistTotal)")
+                        }
+                        Spacer()
+                    }
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
             }
         }
     }
