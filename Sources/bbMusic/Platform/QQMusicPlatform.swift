@@ -325,12 +325,31 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return raw.compactMap { entry in
             guard let tid = entry["tid"] as? Int else { return nil }
             let dirId = entry["dirId"] as? Int
-            let name = (entry["dirName"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
-            let count = (entry["songNum"] as? Int) ?? 0
-            // dirId 201 is QQ Music's fixed "我喜欢的音乐" folder; some accounts leave dirName empty.
-            let isLiked = dirId == 201 || name == "我喜欢"
-            let resolvedName = name.isEmpty ? (isLiked ? "我喜欢" : "未命名歌单") : name
-            return Playlist(id: String(tid), name: resolvedName, trackCount: count, isLikedSongs: isLiked)
+            // The same endpoint returns two shapes: the user's own playlists use `dirName` /
+            // `songNum` / `picUrl`, while playlists collected from other users use `name` /
+            // `songnum` / `logo`. Reading only the first shape made every collected playlist show
+            // up as an unnamed one.
+            let ownName = (entry["dirName"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let collectedName = (entry["name"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let isCollected = (ownName ?? "").isEmpty && !(collectedName ?? "").isEmpty
+            let rawName = isCollected ? (collectedName ?? "") : (ownName ?? "")
+            let count = (entry["songNum"] as? Int)
+                ?? (entry["songnum"] as? Int)
+                ?? 0
+            let cover = (entry["picUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (entry["logo"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (entry["bigpicUrl"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            // dirId 201 is QQ Music's fixed "我喜欢的音乐" folder.
+            let isLiked = dirId == 201 || rawName == "我喜欢"
+            let resolvedName = rawName.isEmpty ? (isLiked ? "我喜欢" : "未命名歌单") : rawName
+            return Playlist(
+                id: String(tid),
+                name: resolvedName,
+                trackCount: count,
+                isLikedSongs: isLiked,
+                isCollected: isCollected,
+                artworkURL: cover.flatMap(URL.init(string:))
+            )
         }
         // 我喜欢 first, then the user's own order.
         .sorted { lhs, rhs in

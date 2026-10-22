@@ -110,6 +110,17 @@ struct SelfTest {
                 ok: !model.playlists.isEmpty,
                 detail: "\(model.playlists.count) playlists, first = \(model.playlists.first?.name ?? "-")"
             ))
+            // Collected playlists arrive with lowercase keys (name/songnum/logo) and used to show up
+            // as unnamed entries. Every playlist must have a real name and a track count.
+            let unnamed = model.playlists.filter { $0.name == "未命名歌单" || $0.name.isEmpty }
+            let noCount = model.playlists.filter { $0.trackCount == 0 }
+            let collected = model.playlists.filter(\.isCollected).count
+            steps.append(Step(
+                name: "playlist-name",
+                ok: unnamed.isEmpty && noCount.isEmpty,
+                detail: "\(model.playlists.count) playlists (\(collected) collected), unnamed \(unnamed.count), zero-count \(noCount.count)"
+            ))
+
             steps.append(Step(
                 name: "albums",
                 ok: !model.albums.isEmpty,

@@ -6,36 +6,27 @@ import Foundation
 final class AppModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case search
-        case daily
-        case charts
         case liked
         case playlists
         case albums
-        case queue
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .search: return "搜索"
-            case .daily: return "每日推荐"
-            case .charts: return "排行榜"
             case .liked: return "我喜欢"
             case .playlists: return "歌单"
             case .albums: return "专辑"
-            case .queue: return "播放队列"
             }
         }
 
         var symbol: String {
             switch self {
             case .search: return "magnifyingglass"
-            case .daily: return "sun.max"
-            case .charts: return "list.number"
             case .liked: return "heart"
             case .playlists: return "music.note.list"
             case .albums: return "square.stack"
-            case .queue: return "list.bullet"
             }
         }
     }
@@ -47,6 +38,8 @@ final class AppModel: ObservableObject {
 
     @Published var section: Section = .search
     @Published var pane: Pane = .list
+    /// The play queue is a transient overlay opened from the player bar, not a sidebar destination.
+    @Published var showQueue = false
     @Published var query = ""
     @Published var searchKind: SearchKind = .song {
         didSet {
@@ -81,6 +74,8 @@ final class AppModel: ObservableObject {
     /// Detail views reached from search, which are not part of the user's own library.
     @Published private(set) var searchPlaylistDetail: SearchPlaylist?
     @Published private(set) var searchArtistDetail: Artist?
+    /// Playlist covers derived from a track, for playlists the API returned without one.
+    @Published private(set) var derivedCovers: [String: URL] = [:]
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
 
@@ -218,6 +213,7 @@ final class AppModel: ObservableObject {
     func selectSection(_ section: Section) async {
         self.section = section
         pane = .list
+        showQueue = false
         selectedPlaylist = nil
         selectedAlbum = nil
         albumDetails = nil
@@ -231,7 +227,7 @@ final class AppModel: ObservableObject {
             await loadTracks { try await platform.likedSongs() }
         case .playlists:
             libraryTracks = []
-        case .albums, .queue:
+        case .albums:
             libraryTracks = []
         default:
             libraryTracks = []
@@ -239,12 +235,28 @@ final class AppModel: ObservableObject {
     }
 
     func open(_ playlist: Playlist) async {
-        section = .playlists
+        // Deliberately does not change `section`: opening a playlist from search results must not
+        // also move the sidebar selection, which previously made the playlist appear selected in
+        // the sidebar as if the user had navigated there.
         pane = .list
         selectedAlbum = nil
         albumDetails = nil
         selectedPlaylist = playlist
         await loadTracks { try await platform.tracks(in: playlist) }
+        deriveCoverIfNeeded(for: playlist)
+    }
+
+    /// Some playlists come back without a cover. Use the artwork of the first track that has one,
+    /// which is what the user would recognise the playlist by anyway.
+    private func deriveCoverIfNeeded(for playlist: Playlist) {
+        guard playlist.artworkURL == nil, derivedCovers[playlist.id] == nil else { return }
+        guard let cover = libraryTracks.compactMap(\.artworkURL).first else { return }
+        derivedCovers[playlist.id] = cover
+    }
+
+    /// The cover to show for a playlist: its own, or one derived from its tracks.
+    func cover(for playlist: Playlist) -> URL? {
+        playlist.artworkURL ?? derivedCovers[playlist.id]
     }
 
     func open(_ album: Album) async {
@@ -360,18 +372,12 @@ final class AppModel: ObservableObject {
         switch section {
         case .search:
             return nil
-        case .daily:
-            return "每日推荐还在接入中。"
-        case .charts:
-            return "排行榜还在接入中。"
         case .liked:
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取「我喜欢」。"
         case .playlists:
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取歌单。"
         case .albums:
             return connection.isConnected ? nil : "需要先登录 QQ 音乐才能读取收藏的专辑。"
-        case .queue:
-            return nil
         }
     }
 

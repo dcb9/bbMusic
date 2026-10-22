@@ -35,6 +35,11 @@ struct Playlist: Identifiable, Codable, Hashable, Sendable {
     let trackCount: Int
     /// QQ Music distinguishes "我喜欢的音乐" from ordinary self-built playlists.
     var isLikedSongs: Bool = false
+    /// True when this is someone else's playlist the user has collected. Collected entries come
+    /// back with different (lowercase) keys and are not editable.
+    var isCollected: Bool = false
+    /// Cover artwork. May be absent; the UI then derives one from the first track that has any.
+    var artworkURL: URL?
 }
 
 /// A saved album.

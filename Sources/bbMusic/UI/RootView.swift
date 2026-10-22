@@ -40,7 +40,7 @@ struct RootView: View {
             ) {
                 model.showLoginSheet = true
             }
-        } else if model.section == .queue {
+        } else if model.showQueue {
             QueuePane(model: model, player: player)
         } else if model.section == .search, model.hasSearchDetail {
             TracksPane(model: model, player: player, context: .searchDetail)
@@ -80,7 +80,9 @@ private struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No platform banner: the account state belongs at the bottom, next to the other one.
-            section("浏览", items: [.search, .daily, .charts, .queue])
+            // 每日推荐 and 排行榜 were never implemented; their entries only ever led to a
+            // placeholder, so they are gone rather than left as dead ends.
+            section("浏览", items: [.search])
             section("我的音乐", items: [.liked, .playlists, .albums])
 
             if model.connection.isConnected, !model.playlists.isEmpty, model.section == .playlists {
@@ -455,8 +457,8 @@ private struct PlaylistsPane: View {
                     } label: {
                         MediaCard(
                             title: playlist.name,
-                            subtitle: "\(playlist.trackCount) 首",
-                            artworkURL: nil,
+                            subtitle: "\(playlist.trackCount) 首\(playlist.isCollected ? " · 收藏" : "")",
+                            artworkURL: model.cover(for: playlist),
                             placeholderSymbol: playlist.isLikedSongs ? "heart.fill" : "music.note.list",
                             side: 120,
                             isSelected: model.selectedPlaylist?.id == playlist.id
@@ -521,6 +523,14 @@ private struct QueuePane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
+                Button {
+                    model.showQueue = false
+                } label: {
+                    Label("返回", systemImage: "chevron.left")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
                 Text("播放队列").font(.system(size: 13, weight: .semibold))
                 if !player.queue.isEmpty {
                     Text("\(player.queue.count) 首").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -808,6 +818,23 @@ private struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help("播放模式")
+
+            // Queue lives at the far right of the player bar: it belongs to playback, not navigation.
+            Button {
+                model.showQueue.toggle()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 11))
+                    if !player.queue.isEmpty {
+                        Text("\(player.queue.count)")
+                            .font(.system(size: 9.5).monospacedDigit())
+                    }
+                }
+                .foregroundStyle(model.showQueue ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("播放队列")
         }
         .padding(.horizontal, 12)
         .frame(height: 58)

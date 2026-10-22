@@ -153,6 +153,12 @@ QQ 音乐其余位置不提供结构化的作曲家/作品号/演奏者字段。
 
 **MCP**：App 内 `NWListener` 只绑 `127.0.0.1:43119`，Bearer token 每次安装生成一次（0600 落盘）。10 个工具覆盖搜索、播放控制、库读取、音质、歌词，**没有任何写操作**——模型可以点歌，不能改歌单/红心/Last.fm。这个边界是有意的：写操作一旦被误调就是真实的账号变更。
 
+## 歌单来源与命名
+
+`/user/playlist` **同一个数组里混着两种结构**：用户自建的用 `dirName` / `songNum` / `picUrl`，收藏别人的用 `name` / `songnum` / `logo`（小写）。只读第一种会让所有收藏歌单显示成「未命名」。解析时按两种键兜底，并用 `isCollected` 标记出来。
+
+封面缺失时（自建歌单也可能没有 `picUrl`）用**第一首有封面的曲目**的封面推导——打开歌单时顺手记下，用户认歌单靠的就是那张图。
+
 ## 搜索与网格
 
 `/search` 用同一个端点、靠 `type=song|album|playlist|singer` 切换，**四种类型的 item 结构完全不同**：专辑是 `albummid`/`singer`(字符串)，歌单是 `dissid`/`dissname`/`nickname`，歌手是 `singerMID`/`singerName`/`singerPic`。所以 `SearchKind` 与 `SearchResults` 各自建模，不复用一个 parser。
