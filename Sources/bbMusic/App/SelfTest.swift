@@ -209,7 +209,13 @@ struct SelfTest {
             var typedDetail: [String] = []
             for kind in SearchKind.allCases {
                 do {
-                    let results = try await model.platform.search("周杰伦", kind: kind)
+                    // The upstream intermittently answers with an empty page; retry once so a
+                    // transient hiccup is not reported as a broken search type.
+                    var results = try await model.platform.search("周杰伦", kind: kind)
+                    if results.count == 0 {
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        results = try await model.platform.search("周杰伦", kind: kind)
+                    }
                     if results.count == 0 { typedFailures.append(kind.label) }
                     typedDetail.append("\(kind.label) \(results.count)")
                 } catch {
