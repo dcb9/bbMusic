@@ -49,6 +49,9 @@ final class AppModel: ObservableObject {
     @Published var pane: Pane = .list
     /// The play queue is a transient overlay opened from the player bar, not a sidebar destination.
     @Published var showQueue = false
+    /// The pane the queue was opened from. The queue's 返回 is only offered when there is somewhere
+    /// to go back to — opened from the lyrics or the song detail page, the same button closes it.
+    @Published private(set) var queueReturnPane: Pane?
     @Published var query = ""
     @Published var searchKind: SearchKind = .song {
         didSet {
@@ -193,29 +196,52 @@ final class AppModel: ObservableObject {
         return token
     }
 
+    /// Opens or closes the queue. Opening from the lyrics or the song detail page records where it
+    /// came from, so the queue can close back to it instead of showing a 返回 that leads nowhere.
+    func toggleQueue() {
+        if showQueue {
+            closeQueue()
+        } else {
+            queueReturnPane = pane == .list ? nil : pane
+            showQueue = true
+        }
+    }
+
+    /// Closes the queue and returns to the pane it was opened from.
+    func closeQueue() {
+        showQueue = false
+        if let previous = queueReturnPane {
+            pane = previous
+            queueReturnPane = nil
+        }
+    }
+
     /// Opens or closes the song detail page for whatever is playing. One entry point for the player
     /// bar and the keyboard shortcut, so both toggle rather than only opening.
     func toggleTrackDetail() {
         guard player.currentTrack != nil else { return }
-        if pane == .trackDetail {
+        if pane == .trackDetail, !showQueue {
             pane = .list
-        } else {
-            showQueue = false
-            pane = .trackDetail
-            loadTrackDetail()
+            return
         }
+        // The queue is an overlay on top of the pages; asking for a page puts it away.
+        showQueue = false
+        queueReturnPane = nil
+        pane = .trackDetail
+        loadTrackDetail()
     }
 
     /// Opens or closes the lyrics page. Same toggle shape as the detail page, so the 「词」 button can
     /// be a switch instead of a one-way door.
     func toggleLyrics() {
         guard player.currentTrack != nil else { return }
-        if pane == .lyrics {
+        if pane == .lyrics, !showQueue {
             pane = .list
-        } else {
-            showQueue = false
-            pane = .lyrics
+            return
         }
+        showQueue = false
+        queueReturnPane = nil
+        pane = .lyrics
     }
 
     /// Fetches the detail rows for the current track. A failure is not reported: the page simply
@@ -318,6 +344,7 @@ final class AppModel: ObservableObject {
         self.section = section
         pane = .list
         showQueue = false
+        queueReturnPane = nil
         clearRoutes()
         sectionTracks = []
         sectionError = nil
@@ -818,6 +845,34 @@ final class AppModel: ObservableObject {
                     : nil
             }
         }
+    }
+
+    /// Searches for an artist by name and shows the singer results.
+    ///
+    /// A combined credit line ("A / B / C") only carries a usable mid for the first artist, so the
+    /// rest cannot be opened as artist pages without guessing. Searching the name instead gives the
+    /// user the singer they clicked — the search response names the real artists, mid included.
+    func searchArtist(named name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        pane = .list
+        showQueue = false
+        clearRoutes()
+        section = .search
+        // Empty the query first: `searchKind`'s observer fires a search when the query is already
+        // non-empty, which would run the new kind against the previous keyword.
+        query = ""
+        searchKind = .singer
+        query = trimmed
+        await runSearch()
+    }
+
+    /// Opens the album behind the current track. The song detail page fills the content area, so it
+    /// has to step aside first — otherwise the album would load underneath a page nobody can see.
+    func openAlbum(of track: Track) async {
+        guard let albumID = track.albumID else { return }
+        pane = .list
+        await openAlbum(id: albumID, name: track.album, artist: track.artist)
     }
 
     /// Plays a row from the search results.

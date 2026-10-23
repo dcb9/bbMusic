@@ -14,6 +14,10 @@ struct TrackDetailPane: View {
     @ObservedObject var player: Player
     let onBack: () -> Void
     @Environment(\.palette) private var palette
+    /// A blurb is often several paragraphs (some run to thousands of characters). Showing it whole
+    /// buries the facts and makes the page feel like a press release, so it is clamped to a few
+    /// lines with an explicit way to read the rest.
+    @State private var introExpanded = false
 
     private var track: Track? { player.currentTrack }
 
@@ -23,6 +27,7 @@ struct TrackDetailPane: View {
             Divider()
             if let track {
                 content(track)
+                    .onChange(of: track.id) { _, _ in introExpanded = false }
             } else {
                 StatusPane(title: "没有正在播放的歌曲", message: "先双击一首歌，再回来看这里。", symbol: nil, usesMark: true)
             }
@@ -96,8 +101,18 @@ struct TrackDetailPane: View {
                         Text(intro)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                             .lineSpacing(4)
+                            .lineLimit(introExpanded ? nil : 4)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if intro.count > 80 {
+                            Button(introExpanded ? "收起" : "展开全部") {
+                                introExpanded.toggle()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(palette.accent)
+                            .padding(.top, 2)
+                        }
                     }
                     .padding(.top, 16)
                 }
@@ -136,56 +151,131 @@ struct TrackDetailPane: View {
                     .font(.system(size: 22, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
-                HStack(spacing: 4) {
-                    Text(track.artist)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(.secondary)
-                    if track.artistID != nil {
-                        Text("›").font(.system(size: 11)).foregroundStyle(.tertiary)
+                // A combined credit ("A / B / C") is several artists performing together, so each
+                // name is shown — and offered — on its own.
+                HStack(spacing: 6) {
+                    ForEach(Array(performers.enumerated()), id: \.offset) { index, name in
+                        if index > 0 {
+                            Text("·")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                        }
+                        artistButton(name)
                     }
                 }
                 // Secondary line: album · year · company, each shown only when the platform said it.
-                Text(secondaryLine(track))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The album is the one part that leads somewhere.
+                HStack(spacing: 5) {
+                    if !track.album.isEmpty {
+                        albumButton(track, font: .system(size: 11))
+                    }
+                    if let rest = secondaryRest(track) {
+                        Text(rest)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .padding(.top, 4)
             Spacer(minLength: 0)
         }
     }
 
-    private func secondaryLine(_ track: Track) -> String {
+    /// Everything on the secondary line after the album: year, then company.
+    private func secondaryRest(_ track: Track) -> String? {
         var parts: [String] = []
-        if !track.album.isEmpty { parts.append(track.album) }
         if let year = track.year { parts.append(String(year)) }
         if let company = model.trackDetail?.company, !company.isEmpty { parts.append(company) }
-        return parts.joined(separator: " · ")
+        guard !parts.isEmpty else { return nil }
+        return (track.album.isEmpty ? "" : "· ") + parts.joined(separator: " · ")
+    }
+
+    /// The credited artists, split on the separators QQ Music uses to join them.
+    private var performers: [String] {
+        guard let track else { return [] }
+        return TrackDisplay.performers(from: track.artist)
+    }
+
+    private func artistButton(_ name: String) -> some View {
+        Button {
+            Task { await model.searchArtist(named: name) }
+        } label: {
+            Text(name)
+                .font(.system(size: 12.5))
+                .foregroundStyle(palette.accent)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("搜索歌手 \(name)")
+        .onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+    }
+
+    /// The album name as a link. Absent when the track carries no album id — a row with a dead link
+    /// is worse than plain text.
+    @ViewBuilder
+    private func albumButton(_ track: Track, font: Font) -> some View {
+        if track.albumID != nil {
+            Button {
+                Task { await model.openAlbum(of: track) }
+            } label: {
+                Text(track.album)
+                    .font(font)
+                    .foregroundStyle(palette.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("打开专辑 \(track.album)")
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+        } else {
+            Text(track.album)
+                .font(font)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// Two columns of label/value pairs. Every row is conditional: a field the platform did not
     /// answer is absent rather than blank, so the table never reads like a form with holes in it.
     private func facts(_ track: Track) -> some View {
+        // Two label/value pairs per row. `Grid` rather than `LazyVGrid`: the table is short and known
+        // up front, and a grid that measures lazily inside a scroll view was re-measuring on every
+        // pass, which made this page slow enough to hang a headless capture.
         let rows = factRows(track)
+        let pairs = stride(from: 0, to: rows.count, by: 2).map { start in
+            Array(rows[start..<min(start + 2, rows.count)])
+        }
         return VStack(alignment: .leading, spacing: 0) {
-            LazyVGrid(
-                columns: [
-                    GridItem(.fixed(88), alignment: .leading),
-                    GridItem(.flexible(), alignment: .leading),
-                    GridItem(.fixed(88), alignment: .leading),
-                    GridItem(.flexible(), alignment: .leading),
-                ],
-                alignment: .leading,
-                spacing: 10
-            ) {
-                ForEach(rows) { row in
-                    Text(row.label)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                    Text(row.value)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+                ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                    GridRow {
+                        ForEach(pair) { row in
+                            Text(row.label)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                            if row.isAlbum {
+                                albumButton(track, font: .system(size: 12))
+                            } else {
+                                Text(row.value)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        // Keep the last row's two columns aligned with the rows above it.
+                        if pair.count == 1 {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
+                    }
                 }
             }
         }
@@ -195,6 +285,8 @@ struct TrackDetailPane: View {
     private struct Fact: Identifiable {
         let label: String
         let value: String
+        /// Rendered as a link to the album rather than as plain text.
+        var isAlbum = false
         var id: String { label }
     }
 
@@ -217,7 +309,7 @@ struct TrackDetailPane: View {
             rows.append(Fact(label: "唱片公司", value: company))
         }
         if !track.album.isEmpty {
-            rows.append(Fact(label: "专辑", value: track.album))
+            rows.append(Fact(label: "专辑", value: track.album, isAlbum: true))
         }
         if let composer = track.composer, !composer.isEmpty {
             rows.append(Fact(label: "作曲", value: composer))

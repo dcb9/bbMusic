@@ -206,6 +206,76 @@ final class NavigationTests: XCTestCase {
         XCTAssertFalse(model.isChartPage, "非榜单页不显示进度")
     }
 
+    // MARK: - Song detail links
+
+    func testTappingOneArtistOfACombinedCreditSearchesForThatName() async {
+        platform.artistSearchResults = [Fixture.artist("a2", name: "杨瑞代")]
+        model.player.play(tracks: [Fixture.track("t1", artistID: "a1")], startingAt: 0)
+
+        await model.searchArtist(named: "杨瑞代")
+
+        XCTAssertEqual(model.section, .search, "点歌手应进入搜索页")
+        XCTAssertEqual(model.searchKind, .singer, "搜索类型应切到歌手")
+        XCTAssertEqual(model.query, "杨瑞代", "关键词应自动填成被点的那位")
+        XCTAssertEqual(platform.searches.last?.query, "杨瑞代", "应该真的按这个名字搜过")
+        XCTAssertEqual(platform.searches.last?.kind, .singer)
+        XCTAssertEqual(model.searchResults.artists.first?.name, "杨瑞代")
+    }
+
+    func testSearchingAnArtistLeavesAnyDetailPage() async {
+        platform.playlistTracks["p1"] = [Fixture.track("x")]
+        await model.open(Fixture.playlist("p1"))
+        XCTAssertNotNil(model.route)
+
+        await model.searchArtist(named: "周杰伦")
+        XCTAssertNil(model.route, "点歌手应离开原来的详情页")
+    }
+
+    func testTappingTheAlbumOpensIt() async {
+        platform.albumTracks["al1"] = [Fixture.track("t1", albumID: "al1")]
+        let track = Fixture.track("t1", albumID: "al1")
+        model.player.play(tracks: [track], startingAt: 0)
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .trackDetail)
+
+        await model.openAlbum(of: track)
+
+        XCTAssertEqual(model.pane, .list, "详情页要让开，否则专辑页看不见")
+        XCTAssertEqual(model.currentAlbum?.id, "al1")
+    }
+
+    func testAlbumWithoutAnIDIsNotOpened() async {
+        let track = Fixture.track("t1")
+        await model.openAlbum(of: track)
+        XCTAssertNil(model.route, "没有专辑 id 时不跳转，也不留空页面")
+    }
+
+    // MARK: - Queue opened from a non-list pane
+
+    func testQueueFromTheSongDetailPageHasNoBackButton() {
+        model.player.play(tracks: [Fixture.track("t1")], startingAt: 0)
+        model.toggleTrackDetail()
+        model.toggleQueue()
+
+        XCTAssertTrue(model.showQueue)
+        XCTAssertEqual(model.queueReturnPane, .trackDetail, "队列要知道自己是从哪来的")
+
+        model.toggleQueue()
+        XCTAssertFalse(model.showQueue)
+        XCTAssertEqual(model.pane, .trackDetail, "再点队列按钮应回到歌曲详情")
+    }
+
+    func testQueueFromTheListKeepsItsBackButton() {
+        model.player.play(tracks: [Fixture.track("t1")], startingAt: 0)
+        model.toggleQueue()
+
+        XCTAssertTrue(model.showQueue)
+        XCTAssertNil(model.queueReturnPane, "从列表打开时应有返回按钮")
+
+        model.closeQueue()
+        XCTAssertEqual(model.pane, .list)
+    }
+
     // MARK: - The sidebar is a way home
 
     func testSelectingTheSameSectionReturnsToItsTopPage() async {

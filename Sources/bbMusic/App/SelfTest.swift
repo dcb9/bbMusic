@@ -468,6 +468,50 @@ struct SelfTest {
             ))
         }
 
+        // 6c5f. The song detail page's links: an artist name searches that artist, the album opens,
+        // and the queue can be opened from the page and closed back to it.
+        if model.connection.isConnected, let playing = model.player.currentTrack {
+            var failures: [String] = []
+
+            model.pane = .list
+            model.toggleTrackDetail()
+            let artists = TrackDisplay.performers(from: playing.artist)
+            if let second = artists.dropFirst().first {
+                await model.searchArtist(named: second)
+                if model.section != .search { failures.append("点歌手没进搜索页") }
+                if model.searchKind != .singer { failures.append("搜索类型不是歌手") }
+                if model.query != second { failures.append("关键词没填成 \(second)") }
+                if model.searchResults.artists.isEmpty { failures.append("按名字搜歌手没有结果") }
+                model.query = ""
+                model.searchKind = .song
+            }
+
+            if let albumID = playing.albumID {
+                model.pane = .trackDetail
+                await model.openAlbum(of: playing)
+                if model.currentAlbum?.id != albumID { failures.append("点专辑没有打开专辑页") }
+                if model.pane != .list { failures.append("打开专辑后详情页仍占着内容区") }
+                model.clearRoutes()
+            }
+
+            model.pane = .trackDetail
+            model.toggleQueue()
+            let queuedFromDetail = model.showQueue && model.queueReturnPane == .trackDetail
+            model.toggleQueue()
+            let closedBack = !model.showQueue && model.pane == .trackDetail
+            if !queuedFromDetail { failures.append("详情页里点队列没有显示队列") }
+            if !closedBack { failures.append("再点队列没有回到详情页") }
+            model.pane = .list
+
+            steps.append(Step(
+                name: "detail-links",
+                ok: failures.isEmpty,
+                detail: failures.isEmpty
+                    ? "\(playing.artist) 拆成 \(artists.count) 位、专辑 \(playing.album.isEmpty ? "—" : playing.album) 可点、队列可开关"
+                    : failures.joined(separator: "; ")
+            ))
+        }
+
         // 6c5b. Navigation: a detail page opened from a list returns to that list, one layer at a time.
         if model.connection.isConnected {
             await model.selectSection(.liked)

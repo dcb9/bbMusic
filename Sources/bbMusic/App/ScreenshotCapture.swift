@@ -144,9 +144,16 @@ enum ScreenshotCapture {
             model.pane = .lyrics
         }))
 
-        // 12. The song's own page, reached from the player bar's left block
+        // 12. The song's own page, reached from the player bar's left block. A multi-artist track is
+        // preferred so the screenshot shows the credit split into separate, clickable names.
         shots.append(("12-track-detail", {
             model.pane = .list
+            model.query = "不该 周杰伦"
+            model.searchKind = .song
+            await model.runSearch()
+            if let duet = model.results.first(where: { TrackDisplay.performers(from: $0.artist).count > 1 }) {
+                await model.playFromSearch(duet)
+            }
             model.toggleTrackDetail()
             // The facts arrive from their own request; give it a moment before the shutter.
             _ = await waitUntil(timeout: 8) { model.trackDetail != nil }

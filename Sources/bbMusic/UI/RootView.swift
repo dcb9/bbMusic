@@ -71,6 +71,10 @@ struct RootView: View {
             ServiceUnavailableView(message: message) {
                 model.start()
             }
+        } else if model.showQueue {
+            // The queue sits above the pane pages: opening it from the lyrics or the song detail
+            // page has to actually show it, and those pages otherwise own the content area.
+            QueuePane(model: model, player: player)
         } else if model.pane == .lyrics, player.currentTrack != nil {
             LyricsView(player: player) {
                 model.pane = .list
@@ -87,8 +91,6 @@ struct RootView: View {
             ) {
                 model.showLoginSheet = true
             }
-        } else if model.showQueue {
-            QueuePane(model: model, player: player)
         } else if let route = model.route {
             // Every detail page comes from the route stack, so what is on screen and where 返回 goes
             // are the same fact. Picking the pane off separate `selected*` fields is what used to
@@ -956,14 +958,18 @@ private struct QueuePane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Button {
-                    model.showQueue = false
-                } label: {
-                    Label("返回", systemImage: "chevron.left")
-                        .font(.system(size: 11))
+                // Opened from the lyrics or the song detail page there is no list behind the queue,
+                // so no 返回 is offered: the queue button itself closes it again.
+                if model.queueReturnPane == nil {
+                    Button {
+                        model.closeQueue()
+                    } label: {
+                        Label("返回", systemImage: "chevron.left")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
                 Text("播放队列").font(.system(size: 13, weight: .semibold))
                 if !player.queue.isEmpty {
                     Text("\(player.queue.count) 首").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -1336,7 +1342,7 @@ private struct PlayerBarView: View {
             // lyrics are open returns to the list. A word rather than an SF Symbol because 词 is what
             // a listener says.
             Button {
-                model.showQueue.toggle()
+                model.toggleQueue()
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "list.bullet")

@@ -42,8 +42,17 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
     func signOut() async throws {}
 
     func search(_ query: String) async throws -> [Track] { [] }
+    var artistSearchResults: [Artist] = []
+    private(set) var searches: [(query: String, kind: SearchKind)] = []
+
     func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults {
-        SearchResults(kind: kind)
+        searches.append((query, kind))
+        var results = SearchResults(kind: kind)
+        if kind == .singer {
+            results.artists = artistSearchResults
+            results.totalAvailable = artistSearchResults.count
+        }
+        return results
     }
 
     func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track] {
