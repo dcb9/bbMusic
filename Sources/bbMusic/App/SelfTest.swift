@@ -794,9 +794,18 @@ struct SelfTest {
             unauthorized.httpBody = request.httpBody
             let (_, unauthedResponse) = try await URLSession.shared.data(for: unauthorized)
             let refused = (unauthedResponse as? HTTPURLResponse)?.statusCode == 401
+
+            // The tools a listener would actually ask for must be advertised, including the writes.
+            let names = Set(tools.compactMap { $0["name"] as? String })
+            let expected: Set<String> = [
+                "like_track", "collect_playlist", "uncollect_playlist",
+                "collect_album", "uncollect_album", "daily_recommendation", "toplists",
+            ]
+            let missing = expected.subtracting(names).sorted()
             return (
-                refused && tools.count >= 8,
+                refused && missing.isEmpty,
                 "\(tools.count) tools, unauthenticated \(refused ? "refused" : "ALLOWED")"
+                    + (missing.isEmpty ? "" : "，缺少 \(missing.joined(separator: ","))")
             )
         } catch {
             return (false, error.localizedDescription)

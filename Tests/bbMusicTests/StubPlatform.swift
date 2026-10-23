@@ -43,14 +43,25 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
 
     func search(_ query: String) async throws -> [Track] { [] }
     var artistSearchResults: [Artist] = []
+    var searchAlbums: [Album] = []
+    var searchPlaylists: [SearchPlaylist] = []
     private(set) var searches: [(query: String, kind: SearchKind)] = []
 
     func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults {
         searches.append((query, kind))
         var results = SearchResults(kind: kind)
-        if kind == .singer {
+        switch kind {
+        case .singer:
             results.artists = artistSearchResults
             results.totalAvailable = artistSearchResults.count
+        case .album:
+            results.albums = searchAlbums
+            results.totalAvailable = searchAlbums.count
+        case .playlist:
+            results.playlists = searchPlaylists
+            results.totalAvailable = searchPlaylists.count
+        case .song:
+            break
         }
         return results
     }
@@ -76,22 +87,37 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
     }
     func dailySongs() async throws -> [Track] { sectionTracks }
 
-    func toplists() async throws -> [Toplist] { [] }
+    var charts: [Toplist] = []
+    func toplists() async throws -> [Toplist] { charts }
 
     func toplistTracks(_ toplist: Toplist, offset: Int) async throws -> (tracks: [Track], total: Int) {
         toplistPages[offset] ?? ([], 0)
     }
 
-    func setLiked(_ liked: Bool, track: Track) async throws {}
-    func setSubscribed(_ subscribed: Bool, album: Album) async throws {}
-    func setSubscribed(_ subscribed: Bool, playlist: SearchPlaylist) async throws {}
+    // Writes are recorded so a test can assert not just the resulting state but that a no-op really
+    // sent nothing.
+    private(set) var likedWrites: [(id: String, liked: Bool)] = []
+    private(set) var albumWrites: [(id: String, subscribed: Bool)] = []
+    private(set) var playlistWrites: [(id: String, subscribed: Bool)] = []
+
+    func setLiked(_ liked: Bool, track: Track) async throws {
+        likedWrites.append((track.id, liked))
+    }
+    func setSubscribed(_ subscribed: Bool, album: Album) async throws {
+        albumWrites.append((album.id, subscribed))
+    }
+    func setSubscribed(_ subscribed: Bool, playlist: SearchPlaylist) async throws {
+        playlistWrites.append((playlist.id, subscribed))
+    }
 
     func likedSongs() async throws -> [Track] { sectionTracks }
-    func playlists() async throws -> [Playlist] { [] }
+    var savedPlaylists: [Playlist] = []
+    func playlists() async throws -> [Playlist] { savedPlaylists }
     func tracks(in playlist: Playlist) async throws -> [Track] {
         playlistTracks[playlist.id] ?? []
     }
-    func albums() async throws -> [Album] { [] }
+    var savedAlbums: [Album] = []
+    func albums() async throws -> [Album] { savedAlbums }
 
     func albumTracks(_ album: Album) async throws -> AlbumContents {
         albumRequests.append(album.id)
@@ -115,6 +141,12 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
     }
     func lyrics(for track: Track) async throws -> Lyrics { .empty }
     func trackDetail(for track: Track) async throws -> TrackDetail { detail }
+
+    var knownTracks: [String: Track] = [:]
+    func track(withID id: String) async throws -> Track {
+        guard let track = knownTracks[id] else { throw Failure(message: "找不到曲目 \(id)") }
+        return track
+    }
 }
 
 /// Convenience builders so a test reads as the scenario, not as a struct literal.

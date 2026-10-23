@@ -77,9 +77,16 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 认证:  Authorization: Bearer <token>   ← 设置 → MCP 里复制
 ```
 
-10 个工具：`search_music`、`play_track`、`playback_control`、`now_playing`、`list_playlists`、`playlist_tracks`、`list_albums`、`liked_songs`、`track_qualities`、`lyrics`。
+17 个工具：
 
-可以直接对模型说「放一首稻香」，它会搜索并播放。**只读 + 播放控制，没有任何写操作**——模型不能改歌单、红心或 Last.fm。只监听回环地址，无 token 一律 401。
+| 类别 | 工具 |
+|---|---|
+| 搜索与播放 | `search_music`、`play_track`、`playback_control`、`now_playing`、`track_qualities`、`lyrics` |
+| 库读取 | `list_playlists`、`playlist_tracks`、`list_albums`、`liked_songs` |
+| 发现 | `daily_recommendation`、`toplists`（可列出 24 个榜单，也可指定 id 直接播） |
+| 收藏（写） | `like_track`、`collect_playlist`、`uncollect_playlist`、`collect_album`、`uncollect_album` |
+
+可以直接对模型说「放一首稻香」「把这张专辑收藏了」「放今天的每日推荐」「放内地榜」。写操作有三条规矩：**声明目标状态而不是翻转**（重试不会把红心翻回去）、**已是目标状态即成功且不重复写**、**失败如实回报**。能力边界刻意收窄——不能改歌单内容、不能删除、不碰 Last.fm。只监听回环地址，无 token 一律 401。
 
 ## 截图
 
@@ -151,9 +158,9 @@ open dist/bbMusic.app
 ./dist/bbMusic.app/Contents/MacOS/bbMusic --self-test
 ```
 
-逐步输出 `PASS`/`FAIL`，退出码即结果。覆盖：sidecar 启动、登录态、搜索与分页、四类搜索、库读取、专辑/歌单/歌手、古典推导、播放与音质、每日推荐、排行榜翻页、详情页逐层返回、搜索结果按专辑入队、红心写入往返、MCP 端点、Last.fm 凭据与记录规则。自检会真的出声，所以统一把音量压到 10%。
+逐步输出 `PASS`/`FAIL`，退出码即结果。覆盖：sidecar 启动、登录态、搜索与分页、四类搜索、库读取、专辑/歌单/歌手、古典推导、播放与音质、每日推荐、排行榜翻页、详情页逐层返回、搜索结果按专辑入队、红心写入往返、MCP 端点（含写工具是否齐全）、Last.fm 凭据与记录规则。自检会真的出声，所以统一把音量压到 2%。
 
-单元测试覆盖不需要网络的纯逻辑（导航栈与入队规则）：
+单元测试覆盖不需要网络的逻辑（导航栈、入队规则、MCP 写操作契约）：
 
 ```sh
 swift test

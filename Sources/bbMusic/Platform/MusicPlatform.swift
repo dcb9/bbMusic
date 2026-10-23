@@ -147,6 +147,8 @@ protocol MusicPlatform: AnyObject, Sendable {
     func lyrics(for track: Track) async throws -> Lyrics
     /// Company, release date, genre, language and blurb for the detail page.
     func trackDetail(for track: Track) async throws -> TrackDetail
+    /// One track's metadata by id, for callers holding a bare id (a model that saved it last week).
+    func track(withID id: String) async throws -> Track
 }
 
 /// A stream quality the QQ Music API understands.

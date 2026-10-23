@@ -109,6 +109,7 @@ final class AppModel: ObservableObject {
     /// Artist detail content. Lives on the stack entry so going back restores it without a request.
     @Published var artistTab: ArtistTab = .songs
     /// Daily recommendation and charts.
+    @Published private(set) var dailyTracks: [Track] = []
     @Published private(set) var toplists: [Toplist] = []
     /// Optimistic like state, keyed by track id. Writes are applied here first so the heart
     /// responds instantly; a failed write reverts it and reports why.
@@ -343,6 +344,23 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Today's 30 recommendations, cached after the first read so a model asking twice does not spend
+    /// two requests on a set that cannot change within a day.
+    func loadDailyTracks() async -> [Track] {
+        if !dailyTracks.isEmpty { return dailyTracks }
+        let tracks = (try? await platform.dailySongs()) ?? []
+        if !tracks.isEmpty { dailyTracks = tracks }
+        return tracks
+    }
+
+    /// The chart index, loaded on demand for callers that are not the charts page (the MCP endpoint).
+    func loadToplistsForMCP() async -> [Toplist] {
+        if !toplists.isEmpty { return toplists }
+        let charts = (try? await platform.toplists()) ?? []
+        if !charts.isEmpty { toplists = charts }
+        return charts
+    }
+
     // MARK: - Navigation
     //
     // A section list is the floor; every detail page sits on the route stack. Opening a page never
@@ -373,7 +391,7 @@ final class AppModel: ObservableObject {
             await loadSectionTracks { try await platform.likedSongs() }
             primeLikes(from: sectionTracks)
         case .daily:
-            await loadSectionTracks { try await platform.dailySongs() }
+            await loadSectionTracks { await self.loadDailyTracks() }
         case .charts:
             await loadToplists()
         case .playlists, .albums, .search:
@@ -508,6 +526,12 @@ final class AppModel: ObservableObject {
     var canLoadMoreToplist: Bool {
         guard case .toplist? = route else { return false }
         return libraryTracks.count < toplistTotal
+    }
+
+    /// The chart behind the open chart page.
+    var currentToplist: Toplist? {
+        if case .toplist(let chart)? = route { return chart }
+        return nil
     }
 
     /// The album behind the open album page, once it is known.
@@ -946,12 +970,22 @@ final class AppModel: ObservableObject {
     /// visible message if QQ Music rejects the change.
     func toggleLike(_ track: Track) async {
         let current = likeStates[track.id] ?? false
-        let desired = !current
-        likeStates[track.id] = desired
+        await setLiked(!current, track: track)
+    }
+
+    /// Sets the heart to a specific state rather than flipping it.
+    ///
+    /// The MCP endpoint needs this: a model saying "like this song" must be able to state the target
+    /// state, because a retried toggle would undo itself. Already being in the desired state is
+    /// success and writes nothing — the same rule the platform adapter follows.
+    func setLiked(_ liked: Bool, track: Track) async {
+        let current = likeStates[track.id] ?? false
+        guard current != liked else { return }
+        likeStates[track.id] = liked
         writeError = nil
         do {
-            try await platform.setLiked(desired, track: track)
-            flash(desired ? "已加入我喜欢 · \(track.title)" : "已从我喜欢移除 · \(track.title)")
+            try await platform.setLiked(liked, track: track)
+            flash(liked ? "已加入我喜欢 · \(track.title)" : "已从我喜欢移除 · \(track.title)")
         } catch {
             likeStates[track.id] = current
             writeError = "红心更新失败：\(error.localizedDescription)"
@@ -1013,6 +1047,37 @@ final class AppModel: ObservableObject {
             flash("已收藏歌单 · \(playlist.name)")
         } catch {
             writeError = "收藏歌单失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Removes an album from the collection.
+    func uncollect(_ album: Album) async {
+        writeError = nil
+        do {
+            try await platform.setSubscribed(false, album: album)
+            albums.removeAll { $0.id == album.id }
+            flash("已取消收藏专辑 · \(album.name)")
+        } catch {
+            writeError = "取消收藏专辑失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Removes a playlist from the collection.
+    func uncollect(_ playlist: Playlist) async {
+        writeError = nil
+        do {
+            try await platform.setSubscribed(false, playlist: SearchPlaylist(
+                id: playlist.id,
+                name: playlist.name,
+                creator: "",
+                trackCount: playlist.trackCount,
+                artworkURL: playlist.artworkURL,
+                listenCount: 0
+            ))
+            await loadLibrary()
+            flash("已取消收藏歌单 · \(playlist.name)")
+        } catch {
+            writeError = "取消收藏歌单失败：\(error.localizedDescription)"
         }
     }
 

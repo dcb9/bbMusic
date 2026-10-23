@@ -416,6 +416,25 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return components.url ?? url
     }
 
+    /// One track's metadata by id.
+    ///
+    /// `/song/batch` is the endpoint that takes mids and answers full track records, and the adapter
+    /// already relies on it for the numeric id a heart needs. Reading the same response means an id
+    /// from a previous session still resolves to a real track, with the metadata a write requires.
+    func track(withID id: String) async throws -> Track {
+        let body: [String: Any] = ["songs": [["mid": id]]]
+        let data = try await postJSON("/song/batch", body: body)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = root["results"] as? [[String: Any]],
+              let first = results.first,
+              let song = first["song"] as? [String: Any],
+              let track = Self.track(from: song)
+        else {
+            throw PlatformError("找不到曲目 \(id)")
+        }
+        return track
+    }
+
     /// Company, release date, genre, language and blurb for the detail page.
     ///
     /// `/getSongInfo` answers a rich `info` dictionary keyed by field name; every value is a list of
