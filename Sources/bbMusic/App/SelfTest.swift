@@ -468,6 +468,24 @@ struct SelfTest {
             ))
         }
 
+        // 6c5e1. Appearance: the three choices exist, and the chosen one is written down so the next
+        // launch opens in the same palette.
+        do {
+            let store = AppearanceStore(supportDirectory: model.supportDirectory)
+            let before = model.appearance
+            let labels = AppearanceMode.allCases.map(\.label)
+            model.setAppearance(.dark)
+            let savedDark = store.load() == .dark && model.appearance == .dark
+            model.setAppearance(.system)
+            let savedSystem = store.load() == .system && model.appearance == .system
+            model.setAppearance(before)
+            steps.append(Step(
+                name: "appearance",
+                ok: labels.count == 3 && savedDark && savedSystem,
+                detail: "\(labels.joined(separator: " / "))，选择落盘 \(savedDark && savedSystem ? "正常" : "失败")"
+            ))
+        }
+
         // 6c5e2. The queue is a song list like any other: its rows carry album and artist, and the
         // heart can be toggled from there.
         if model.connection.isConnected, !model.player.queue.isEmpty {

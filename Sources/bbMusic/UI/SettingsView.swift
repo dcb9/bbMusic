@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// Standard settings window (⌘,). Two accounts, each with its current state and the one action that
-/// matters: authorize or sign out.
+/// Standard settings window (⌘,). The two accounts, each with its current state and the one action
+/// that matters, plus the two things about the app itself a user can reasonably want to change: how
+/// it looks and how a model may talk to it.
 struct SettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         TabView {
+            AppearanceSettings(model: model)
+                .tabItem { Label("外观", systemImage: "circle.lefthalf.filled") }
             QQMusicSettings(model: model)
                 .tabItem { Label("QQ 音乐", systemImage: "music.note") }
             LastFMSettings(model: model)
@@ -15,6 +18,64 @@ struct SettingsView: View {
                 .tabItem { Label("MCP", systemImage: "brain") }
         }
         .frame(width: 500, height: 320)
+    }
+}
+
+// MARK: - Appearance
+
+private struct AppearanceSettings: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Form {
+                LabeledContent("外观") {
+                    Picker("", selection: Binding(
+                        get: { model.appearance },
+                        set: { model.setAppearance($0) }
+                    )) {
+                        ForEach(AppearanceMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 240)
+                }
+                LabeledContent("当前") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.primary.opacity(0.25))
+                            .frame(width: 7, height: 7)
+                        Text(currentText)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            Spacer(minLength: 0)
+
+            Text("跟随系统时，窗口用 macOS 的外观设置；选浅色或深色只影响 bbMusic，不改变系统本身。选择会被记住。")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(16)
+        }
+    }
+
+    /// Says what is on screen right now, which is the only way to tell that "跟随系统" resolved to
+    /// something — the picker itself shows the preference, not its effect.
+    private var currentText: String {
+        switch model.appearance {
+        case .system:
+            return colorScheme == .dark ? "跟随系统 · 当前深色" : "跟随系统 · 当前浅色"
+        case .light:
+            return "浅色"
+        case .dark:
+            return "深色"
+        }
     }
 }
 

@@ -297,6 +297,32 @@ final class NavigationTests: XCTestCase {
         XCTAssertFalse(model.isChartPage, "离开榜单后标题应回到曲目数")
     }
 
+    // MARK: - Appearance
+
+    func testAppearanceDefaultsToFollowingTheSystem() {
+        XCTAssertEqual(model.appearance, .system)
+        XCTAssertNil(AppearanceMode.system.appearance, "跟随系统不强制任何外观")
+        XCTAssertNotNil(AppearanceMode.light.appearance)
+        XCTAssertNotNil(AppearanceMode.dark.appearance)
+    }
+
+    func testAppearanceChoiceIsRemembered() throws {
+        model.setAppearance(.dark)
+        XCTAssertEqual(model.appearance, .dark)
+
+        // A fresh model on the same support directory must come back in the same appearance.
+        let reopened = AppModel(platform: platform, supportDirectory: support, sidecarDirectory: support)
+        reopened.start()
+        XCTAssertEqual(reopened.appearance, .dark)
+        reopened.setAppearance(.system)
+    }
+
+    func testAppearanceModesHaveDistinctLabels() {
+        let labels = AppearanceMode.allCases.map(\.label)
+        XCTAssertEqual(labels, ["跟随系统", "浅色", "深色"])
+        XCTAssertEqual(Set(labels).count, labels.count)
+    }
+
     // MARK: - The sidebar is a way home
 
     func testSelectingTheSameSectionReturnsToItsTopPage() async {

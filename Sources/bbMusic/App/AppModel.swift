@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Top-level app state: the sidecar, the platform, the player, and whatever the current pane is
@@ -117,6 +118,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var writeSuccess: String?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
+    /// Light / dark / follow the system. Persisted and applied to the window's appearance, so the
+    /// palette the views already resolve from `colorScheme` follows along.
+    @Published private(set) var appearance: AppearanceMode = .system
     /// Extra facts for the song detail page, fetched when the page opens.
     @Published private(set) var trackDetail: TrackDetail?
     private var trackDetailTask: Task<Void, Never>?
@@ -129,6 +133,7 @@ final class AppModel: ObservableObject {
     let platform: MusicPlatform
     /// Where local state lives. Injected so tests never touch the real one.
     let supportDirectory: URL
+    private lazy var appearanceStore = AppearanceStore(supportDirectory: supportDirectory)
     private let sidecar: SidecarManager
     private var connectionTask: Task<Void, Never>?
 
@@ -258,7 +263,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Switches the app's appearance and remembers it. Applied through `NSApp.appearance`, which is
+    /// what the window and every `NSHostingView` inside it inherit.
+    ///
+    /// `NSApp` is nil outside a running application (a test bundle, for one), so the preference is
+    /// still recorded and simply has nothing to apply to yet.
+    func setAppearance(_ mode: AppearanceMode) {
+        appearance = mode
+        appearanceStore.save(mode)
+        NSApp?.appearance = mode.appearance
+    }
+
     func start() {
+        // Restore the saved appearance before anything is drawn, so the first frame is already in
+        // the right palette instead of flashing the system's.
+        setAppearance(appearanceStore.load())
         // Credentials come from the Keychain only. The application identity is never compiled in:
         // the shared secret is enough to sign requests as this application, so it must not be
         // readable from the source tree or from `strings` on the binary.

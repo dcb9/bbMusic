@@ -39,16 +39,17 @@ enum ScreenshotCapture {
         let directory = outputDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        if let appearance = requestedAppearance {
-            NSApp.appearance = appearance
-        }
-
         // A fixed size makes the screenshots comparable run to run.
         await setWindowSize(CGSize(width: 1180, height: 760))
         // The queue shot starts real playback; keep it barely audible rather than taking over the
         // machine. It is also the marker that this run is a test, not the user's own listening.
         model.player.volume = 0.02
         model.start()
+        // After `start()`, which restores the saved appearance: a capture run forces the palette it
+        // was asked for, and must not leave that choice saved for the user's next launch.
+        if let appearance = requestedAppearance {
+            NSApp.appearance = appearance
+        }
         // Wait for the sidecar, then for the account so the pages have real data.
         _ = await waitUntil(timeout: 30) { model.sidecarState.port != nil }
         await model.refreshConnection()
