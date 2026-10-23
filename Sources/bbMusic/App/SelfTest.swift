@@ -20,7 +20,7 @@ struct SelfTest {
 
     /// Headless runs play real audio through the user's speakers, so they are quiet by design: the
     /// check is about whether playback advances, not about how it sounds.
-    static let headlessVolume: Double = 0.1
+    static let headlessVolume: Double = 0.02
 
     @MainActor
     static func run(model: AppModel) async -> (report: String, ok: Bool) {
@@ -395,6 +395,77 @@ struct SelfTest {
                 ))
                 model.clearRoutes()
             }
+        }
+
+        // 6c5a. The artist page states the artist's real totals, not the size of one page and not the
+        // 0 a row-started route was seeded with. The profile endpoint has no counts at all, so this
+        // only passes when they are taken from the listings.
+        if model.connection.isConnected {
+            if let found = try? await model.platform.search("周杰伦", kind: .singer, page: 1),
+               let artist = found.artists.first {
+                await model.open(artist)
+                let shown = model.searchArtistDetail
+                let failures: [String] = [
+                    (shown?.songCount ?? 0) > 0 ? nil : "歌曲数是 0",
+                    (shown?.albumCount ?? 0) > 0 ? nil : "专辑数是 0",
+                    (shown?.songCount ?? 0) >= model.artistSongs.count ? nil : "歌曲数小于已载入的首屏曲目数",
+                ].compactMap { $0 }
+                steps.append(Step(
+                    name: "artist-counts",
+                    ok: failures.isEmpty,
+                    detail: failures.isEmpty
+                        ? "\(shown?.name ?? "?") \(shown?.songCount ?? 0) 首 · \(shown?.albumCount ?? 0) 张专辑（首屏 \(model.artistSongs.count) 首）"
+                        : failures.joined(separator: "; ")
+                ))
+                model.clearRoutes()
+            }
+        }
+
+        // 6c5d. A chart reports how much of itself is on screen, and keeps doing so once everything
+        // has loaded — that is when a listener wants to confirm they saw the whole thing.
+        if model.connection.isConnected {
+            let charts = (try? await model.platform.toplists()) ?? []
+            if let chart = charts.first(where: { $0.trackCount > 20 }) {
+                await model.selectSection(.charts)
+                await model.open(chart)
+                let loaded = model.libraryTracks.count
+                let total = model.toplistTotal
+                let firstLine = model.isChartPage && total > 0
+                // Page through to the end so the "all loaded" state is the one asserted.
+                var guardCount = 0
+                while model.canLoadMoreToplist, guardCount < 12 {
+                    await model.loadMoreToplistTracks()
+                    guardCount += 1
+                }
+                let allLoaded = !model.canLoadMoreToplist && model.libraryTracks.count == model.toplistTotal
+                steps.append(Step(
+                    name: "chart-progress",
+                    ok: firstLine && allLoaded && model.isChartPage,
+                    detail: firstLine
+                        ? "\(chart.title): 首屏 \(loaded)/\(total)，翻完 \(model.libraryTracks.count)/\(model.toplistTotal)，常驻进度 \(model.isChartPage)"
+                        : "榜单页没有报进度（\(loaded)/\(total)）"
+                ))
+                model.clearRoutes()
+            }
+        }
+
+        // 6c5e. The song detail page: it opens from the player bar's target, follows the current
+        // track, and reports the facts the platform actually supplied.
+        if model.connection.isConnected, let playing = model.player.currentTrack {
+            model.pane = .list
+            model.toggleTrackDetail()
+            let opened = model.pane == .trackDetail
+            _ = await waitUntil(timeout: 10) { model.trackDetail != nil }
+            let facts = model.trackDetail
+            model.toggleTrackDetail()
+            let closed = model.pane == .list
+            steps.append(Step(
+                name: "track-detail",
+                ok: opened && closed,
+                detail: opened && closed
+                    ? "\(playing.title.prefix(18))：打开/再点收起正常，字段 company=\(facts?.company ?? "—") genre=\(facts?.genre ?? "—") lang=\(facts?.language ?? "—") intro=\(facts?.intro == nil ? "—" : "有")"
+                    : "详情页开关异常（opened=\(opened) closed=\(closed)）"
+            ))
         }
 
         // 6c5b. Navigation: a detail page opened from a list returns to that list, one layer at a time.

@@ -45,8 +45,9 @@ enum ScreenshotCapture {
 
         // A fixed size makes the screenshots comparable run to run.
         await setWindowSize(CGSize(width: 1180, height: 760))
-        // The queue shot starts real playback; keep it quiet rather than taking over the machine.
-        model.player.volume = 0.1
+        // The queue shot starts real playback; keep it barely audible rather than taking over the
+        // machine. It is also the marker that this run is a test, not the user's own listening.
+        model.player.volume = 0.02
         model.start()
         // Wait for the sidecar, then for the account so the pages have real data.
         _ = await waitUntil(timeout: 30) { model.sidecarState.port != nil }
@@ -141,6 +142,14 @@ enum ScreenshotCapture {
         shots.append(("11-lyrics", {
             model.showQueue = false
             model.pane = .lyrics
+        }))
+
+        // 12. The song's own page, reached from the player bar's left block
+        shots.append(("12-track-detail", {
+            model.pane = .list
+            model.toggleTrackDetail()
+            // The facts arrive from their own request; give it a moment before the shutter.
+            _ = await waitUntil(timeout: 8) { model.trackDetail != nil }
         }))
 
         var failures = 0

@@ -37,9 +37,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    enum Pane {
+    /// What fills the content area. These are exclusive: the list, the lyrics and the song's own
+    /// page occupy the same place, so showing one is leaving the others.
+    enum Pane: Equatable {
         case list
         case lyrics
+        case trackDetail
     }
 
     @Published var section: Section = .search
@@ -111,6 +114,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var writeSuccess: String?
     /// Row selection is separate from playback: clicking selects, double-clicking plays.
     @Published var selectedTrackID: String?
+    /// Extra facts for the song detail page, fetched when the page opens.
+    @Published private(set) var trackDetail: TrackDetail?
+    private var trackDetailTask: Task<Void, Never>?
 
     let player: Player
     let scrobbler: Scrobbler
@@ -155,6 +161,8 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.scrobbler.playerIsPreview = self.player.isPreview
             self.scrobbler.trackStarted(track, isPreview: self.player.isPreview)
+            // The detail page follows the song, so a new track replaces its facts.
+            if self.pane == .trackDetail { self.loadTrackDetail() }
         }
         player.onProgress = { [weak self] elapsed in
             self?.scrobbler.updateProgress(elapsed)
@@ -183,6 +191,45 @@ final class AppModel: ObservableObject {
         try? token.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         return token
+    }
+
+    /// Opens or closes the song detail page for whatever is playing. One entry point for the player
+    /// bar and the keyboard shortcut, so both toggle rather than only opening.
+    func toggleTrackDetail() {
+        guard player.currentTrack != nil else { return }
+        if pane == .trackDetail {
+            pane = .list
+        } else {
+            showQueue = false
+            pane = .trackDetail
+            loadTrackDetail()
+        }
+    }
+
+    /// Opens or closes the lyrics page. Same toggle shape as the detail page, so the 「词」 button can
+    /// be a switch instead of a one-way door.
+    func toggleLyrics() {
+        guard player.currentTrack != nil else { return }
+        if pane == .lyrics {
+            pane = .list
+        } else {
+            showQueue = false
+            pane = .lyrics
+        }
+    }
+
+    /// Fetches the detail rows for the current track. A failure is not reported: the page simply
+    /// shows the rows it has, because these facts are decoration next to playback.
+    func loadTrackDetail() {
+        trackDetailTask?.cancel()
+        trackDetail = nil
+        guard let track = player.currentTrack else { return }
+        trackDetailTask = Task { [weak self] in
+            guard let self else { return }
+            let detail = try? await self.platform.trackDetail(for: track)
+            guard !Task.isCancelled, self.player.currentTrack?.id == track.id else { return }
+            self.trackDetail = detail
+        }
     }
 
     func start() {
@@ -402,6 +449,12 @@ final class AppModel: ObservableObject {
 
     /// How many tracks the open chart claims to have.
     var toplistTotal: Int { routes.current?.toplistTotal ?? 0 }
+
+    /// Whether a chart is open. A chart is the only page that reports load progress.
+    var isChartPage: Bool {
+        if case .toplist? = route { return true }
+        return false
+    }
 
     /// Whether the open chart has more tracks to fetch. A chart is the only page that pages, so this
     /// is false everywhere else — the earlier version keyed it off "a chart was opened at some
@@ -740,18 +793,27 @@ final class AppModel: ObservableObject {
             async let songs = self.platform.songs(by: artist)
             async let albums = self.platform.albums(by: artist)
             let profile = try? await detail
-            let songList = (try? await songs) ?? []
-            let albumList = (try? await albums) ?? []
+            let songList = (try? await songs) ?? ArtistSongs(tracks: [], total: nil)
+            let albumList = (try? await albums) ?? ArtistAlbums(albums: [], total: nil)
             self.updateRoute(token) { entry in
-                let resolved = profile ?? artist
-                // The row only knows a name; the detail endpoint's profile replaces it, so the page
-                // header (and the route itself) carries the real counts and artwork.
+                let base = profile ?? artist
+                // The profile endpoint has no counts; the listings do. Take them from there so the
+                // page states how many songs and albums the artist actually has, not how many fit
+                // in one page (and not the 0 a row-started route was seeded with).
+                let resolved = Artist(
+                    id: base.id,
+                    name: base.name,
+                    songCount: songList.total ?? base.songCount,
+                    albumCount: albumList.total ?? base.albumCount,
+                    artworkURL: base.artworkURL,
+                    bio: base.bio
+                )
                 entry.route = .artist(resolved)
                 entry.artist = resolved
-                entry.artistSongs = songList
-                entry.artistAlbums = albumList
-                entry.tracks = songList
-                entry.error = songList.isEmpty && albumList.isEmpty
+                entry.artistSongs = songList.tracks
+                entry.artistAlbums = albumList.albums
+                entry.tracks = songList.tracks
+                entry.error = songList.tracks.isEmpty && albumList.albums.isEmpty
                     ? "这个歌手的歌曲与专辑都没能取到"
                     : nil
             }

@@ -108,12 +108,16 @@ protocol MusicPlatform: AnyObject, Sendable {
     func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults
     /// Tracks of a playlist found by search (it may belong to another user).
     func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track]
-    /// An artist's songs.
-    func songs(by artist: Artist) async throws -> [Track]
-    /// Full artist profile (name, counts, biography).
+    /// An artist's songs, with the artist's total song count when the platform reports one.
+    ///
+    /// The count travels with the listing because the profile endpoint does not carry it: QQ Music's
+    /// `/singer/detail` has a name, a picture and a biography and nothing else, so an artist page that
+    /// read counts from there showed 0.
+    func songs(by artist: Artist) async throws -> ArtistSongs
+    /// Full artist profile (name, biography).
     func artistDetail(_ artist: Artist) async throws -> Artist
-    /// An artist's albums.
-    func albums(by artist: Artist) async throws -> [Album]
+    /// An artist's albums, with the artist's total album count when the platform reports one.
+    func albums(by artist: Artist) async throws -> ArtistAlbums
     /// The account's daily recommendation (30 tracks).
     func dailySongs() async throws -> [Track]
     /// All charts, grouped.
@@ -141,6 +145,8 @@ protocol MusicPlatform: AnyObject, Sendable {
     func availableQualities(for track: Track) async throws -> [AvailableQuality]
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource
     func lyrics(for track: Track) async throws -> Lyrics
+    /// Company, release date, genre, language and blurb for the detail page.
+    func trackDetail(for track: Track) async throws -> TrackDetail
 }
 
 /// A stream quality the QQ Music API understands.
@@ -296,6 +302,29 @@ struct Artist: Identifiable, Hashable, Sendable {
     let artworkURL: URL?
     /// Biography, when the artist detail endpoint supplies one.
     var bio: String?
+}
+
+/// An artist's songs plus the total the platform says the artist has.
+struct ArtistSongs: Sendable {
+    var tracks: [Track]
+    /// Total songs on the artist, which can exceed `tracks.count` — the listing is one page.
+    var total: Int?
+}
+
+/// An artist's albums plus the total the platform says the artist has.
+struct ArtistAlbums: Sendable {
+    var albums: [Album]
+    var total: Int?
+}
+
+/// Extra facts about one song, for the detail page. Every field is optional: the platform answers
+/// what it has, and the page shows the rows it got rather than placeholders.
+struct TrackDetail: Sendable, Equatable {
+    var company: String?
+    var releaseDate: String?
+    var genre: String?
+    var language: String?
+    var intro: String?
 }
 
 /// One chart, as listed by the charts index.

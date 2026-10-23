@@ -63,9 +63,13 @@ struct BbMusicApp: App {
                     .keyboardShortcut(.rightArrow, modifiers: [.command])
                 Divider()
                 Button("显示歌词") {
-                    model.pane = .lyrics
+                    model.toggleLyrics()
                 }
                 .keyboardShortcut("l", modifiers: [.command])
+                Button("歌曲详情") {
+                    model.toggleTrackDetail()
+                }
+                .keyboardShortcut("d", modifiers: [.command])
                 Button("返回列表") {
                     model.pane = .list
                 }

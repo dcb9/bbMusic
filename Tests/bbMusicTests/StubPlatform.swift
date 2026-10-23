@@ -25,6 +25,10 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
     var failingAlbums: Set<String> = []
     var artistSongs: [Track] = []
     var artistAlbums: [Album] = []
+    /// Totals the listing endpoints report, which can exceed what one page holds.
+    var artistSongTotal: Int?
+    var artistAlbumTotal: Int?
+    var detail = TrackDetail()
     var toplistPages: [Int: (tracks: [Track], total: Int)] = [:]
 
     // Recorded calls.
@@ -46,16 +50,21 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
         playlistTracks[playlist.id] ?? []
     }
 
-    func songs(by artist: Artist) async throws -> [Track] { artistSongs }
-    /// The real endpoint fills in counts and artwork the row did not know; the stub does the same so
-    /// a test can tell a stub route from a resolved one.
+    func songs(by artist: Artist) async throws -> ArtistSongs {
+        ArtistSongs(tracks: artistSongs, total: artistSongTotal ?? artistSongs.count)
+    }
+    /// Mirrors the real endpoint: it supplies a biography and artwork but **no counts**, which is
+    /// exactly why an artist page cannot read them from here.
     func artistDetail(_ artist: Artist) async throws -> Artist {
         Artist(
-            id: artist.id, name: artist.name, songCount: 5, albumCount: 2,
-            artworkURL: artist.artworkURL, bio: artist.bio
+            id: artist.id, name: artist.name,
+            songCount: artist.songCount, albumCount: artist.albumCount,
+            artworkURL: artist.artworkURL, bio: "简介"
         )
     }
-    func albums(by artist: Artist) async throws -> [Album] { artistAlbums }
+    func albums(by artist: Artist) async throws -> ArtistAlbums {
+        ArtistAlbums(albums: artistAlbums, total: artistAlbumTotal ?? artistAlbums.count)
+    }
     func dailySongs() async throws -> [Track] { sectionTracks }
 
     func toplists() async throws -> [Toplist] { [] }
@@ -96,6 +105,7 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
         .url(URL(string: "https://example.invalid/\(track.id).mp3")!)
     }
     func lyrics(for track: Track) async throws -> Lyrics { .empty }
+    func trackDetail(for track: Track) async throws -> TrackDetail { detail }
 }
 
 /// Convenience builders so a test reads as the scenario, not as a struct literal.

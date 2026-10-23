@@ -32,7 +32,21 @@ final class NavigationTests: XCTestCase {
         await model.openArtist(id: "a1", name: "歌手")
 
         XCTAssertEqual(model.section, .liked, "从「我喜欢」点歌手，侧边栏必须留在「我喜欢」")
-        XCTAssertEqual(model.route, .artist(Fixture.artist("a1")))
+        XCTAssertEqual(model.searchArtistDetail?.id, "a1")
+    }
+
+    /// The profile endpoint reports no counts, so the page must take them from the listings — the
+    /// earlier code read `songNum`/`albumNum` off the profile and showed 0 for every artist.
+    func testArtistCountsComeFromTheListings() async {
+        platform.artistSongs = [Fixture.track("s1", artistID: "a1")]
+        platform.artistAlbums = [Fixture.album("al1")]
+        platform.artistSongTotal = 1011
+        platform.artistAlbumTotal = 43
+
+        await model.openArtist(id: "a1", name: "歌手")
+
+        XCTAssertEqual(model.searchArtistDetail?.songCount, 1011, "歌曲数应是列表接口报的总量")
+        XCTAssertEqual(model.searchArtistDetail?.albumCount, 43, "专辑数应是列表接口报的总量")
     }
 
     func testAlbumFromLibraryKeepsSection() async {
@@ -144,6 +158,52 @@ final class NavigationTests: XCTestCase {
         // Whatever was in flight for the popped page must not write into the section list.
         XCTAssertTrue(model.libraryTracks.isEmpty)
         XCTAssertNil(model.route)
+    }
+
+    // MARK: - Song detail page
+
+    func testTrackDetailTogglesAndClosesWithTheSameGesture() async {
+        model.player.play(tracks: [Fixture.track("t1")], startingAt: 0)
+        XCTAssertEqual(model.pane, .list)
+
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .trackDetail, "点播放条左侧应打开详情页")
+
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .list, "再点一次应收起详情页")
+    }
+
+    func testTrackDetailDoesNothingWithoutATrack() {
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .list, "没有在播的歌时不应进入一个空详情页")
+    }
+
+    func testLyricsButtonToggles() async {
+        model.player.play(tracks: [Fixture.track("t1")], startingAt: 0)
+        model.toggleLyrics()
+        XCTAssertEqual(model.pane, .lyrics)
+        model.toggleLyrics()
+        XCTAssertEqual(model.pane, .list, "「词」是开关，第二次点击回列表")
+    }
+
+    func testDetailAndLyricsAreExclusive() async {
+        model.player.play(tracks: [Fixture.track("t1")], startingAt: 0)
+        model.toggleLyrics()
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .trackDetail, "进详情页应离开歌词页，而不是叠在一起")
+        model.toggleLyrics()
+        XCTAssertEqual(model.pane, .lyrics)
+    }
+
+    func testChartPageIsTheOnlyPageReportingProgress() async {
+        platform.toplistPages[0] = (tracks: (0..<20).map { Fixture.track("c\($0)") }, total: 100)
+        await model.selectSection(.charts)
+        await model.open(Fixture.toplist("t1"))
+        XCTAssertTrue(model.isChartPage)
+        XCTAssertTrue(model.canLoadMoreToplist)
+
+        await model.open(Fixture.playlist("p1"))
+        XCTAssertFalse(model.isChartPage, "非榜单页不显示进度")
     }
 
     // MARK: - The sidebar is a way home

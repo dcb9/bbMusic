@@ -205,21 +205,30 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return songs.compactMap(Self.track(from:))
     }
 
-    func songs(by artist: Artist) async throws -> [Track] {
+    func songs(by artist: Artist) async throws -> ArtistSongs {
         // The route reads `mid`, not `singermid`; the latter silently fails validation.
         let data = try await get("/singer/songs", query: [
             .init(name: "mid", value: artist.id),
             .init(name: "page", value: "1"),
             .init(name: "limit", value: "100"),
         ])
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ArtistSongs(tracks: [], total: nil)
+        }
         let items = (root["songs"] as? [[String: Any]])
             ?? (root["items"] as? [[String: Any]])
             ?? ((root["data"] as? [String: Any])?["list"] as? [[String: Any]])
             ?? []
-        return items.compactMap(Self.track(from:))
+        // `total` is the artist's real song count (the page itself holds 30). This is the only place
+        // the number is available — `/singer/detail` does not report counts at all.
+        return ArtistSongs(tracks: items.compactMap(Self.track(from:)), total: root["total"] as? Int)
     }
 
+    /// The profile: a name, a picture and a biography.
+    ///
+    /// Deliberately leaves the counts alone — this endpoint does not report them (verified: the
+    /// payload is `mid/name/id/pic/desc/wiki/foreignName/birthday`), so the counts come from the
+    /// song and album listings instead.
     func artistDetail(_ artist: Artist) async throws -> Artist {
         let data = try await get("/singer/detail", query: [.init(name: "mid", value: artist.id)])
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -228,14 +237,14 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return Artist(
             id: artist.id,
             name: (singer["name"] as? String) ?? artist.name,
-            songCount: (singer["songNum"] as? Int) ?? artist.songCount,
-            albumCount: (singer["albumNum"] as? Int) ?? artist.albumCount,
+            songCount: artist.songCount,
+            albumCount: artist.albumCount,
             artworkURL: (singer["pic"] as? String).flatMap(Self.secureImageURL) ?? artist.artworkURL,
             bio: (singer["desc"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
-    func albums(by artist: Artist) async throws -> [Album] {
+    func albums(by artist: Artist) async throws -> ArtistAlbums {
         // Despite the `/:singermid?/:limit?/:page?` path template, the handler reads *query*
         // parameters — passing them in the path returns `no singermid`.
         let data = try await get("/getSingerAlbum", query: [
@@ -248,8 +257,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
               let payload = response["singer"] as? [String: Any],
               let inner = payload["data"] as? [String: Any],
               let list = inner["albumList"] as? [[String: Any]]
-        else { return [] }
-        return list.compactMap { entry in
+        else { return ArtistAlbums(albums: [], total: nil) }
+        let albums = list.compactMap { entry -> Album? in
             guard let mid = entry["albumMid"] as? String, !mid.isEmpty else { return nil }
             var year: Int?
             if let raw = entry["publishDate"] as? String, let value = Int(raw.prefix(4)), value > 1000 {
@@ -264,6 +273,8 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
                 year: year
             )
         }
+        // `total` is the artist's real album count; `albumList` holds only this page.
+        return ArtistAlbums(albums: albums, total: inner["total"] as? Int)
     }
 
     func dailySongs() async throws -> [Track] {
@@ -403,6 +414,40 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         else { return url }
         components.scheme = "https"
         return components.url ?? url
+    }
+
+    /// Company, release date, genre, language and blurb for the detail page.
+    ///
+    /// `/getSongInfo` answers a rich `info` dictionary keyed by field name; every value is a list of
+    /// `{ value }` entries. Only the fields the page shows are read, and a missing one stays nil so
+    /// the page drops that row instead of inventing it.
+    func trackDetail(for track: Track) async throws -> TrackDetail {
+        let data = try await get("/getSongInfo", query: [.init(name: "songmid", value: track.id)])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let response = root["response"] as? [String: Any],
+              let songinfo = response["songinfo"] as? [String: Any],
+              let payload = songinfo["data"] as? [String: Any],
+              let info = payload["info"] as? [String: Any]
+        else { return TrackDetail() }
+
+        func value(_ key: String) -> String? {
+            guard let field = info[key] as? [String: Any],
+                  let contents = field["content"] as? [[String: Any]]
+            else { return nil }
+            let text = contents
+                .compactMap { ($0["value"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " / ")
+            return text.isEmpty ? nil : text
+        }
+
+        return TrackDetail(
+            company: value("company"),
+            releaseDate: value("pub_time"),
+            genre: value("genre"),
+            language: value("lan"),
+            intro: value("intro")
+        )
     }
 
     func lyrics(for track: Track) async throws -> Lyrics {

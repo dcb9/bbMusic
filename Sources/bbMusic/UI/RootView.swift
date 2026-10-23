@@ -75,6 +75,10 @@ struct RootView: View {
             LyricsView(player: player) {
                 model.pane = .list
             }
+        } else if model.pane == .trackDetail, player.currentTrack != nil {
+            TrackDetailPane(model: model, player: player) {
+                model.pane = .list
+            }
         } else if let unsupported = model.unsupportedMessage(for: model.section) {
             UnavailablePane(
                 title: model.section.title,
@@ -640,15 +644,22 @@ private struct TracksPane: View {
                         Task { await model.openAlbum(id: id, name: name, artist: artist) }
                     }
                 )
-                if model.canLoadMoreToplist {
+                // A chart always says how much of it is on screen — "20 / 100" while there is more
+                // to fetch, and the same line settled once everything is loaded. It used to appear
+                // only while paging was still possible, so the count vanished exactly when the user
+                // wanted to confirm they had seen the whole chart.
+                if model.isChartPage {
                     HStack(spacing: 6) {
                         if model.isLoadingMore {
                             ProgressView().controlSize(.small).scaleEffect(0.6)
                             Text("载入中…")
+                        } else if model.canLoadMoreToplist {
+                            Text("继续向下滚动载入更多")
                         } else {
-                            Text("已载入 \(model.libraryTracks.count) / \(model.toplistTotal)")
+                            Text("已全部载入")
                         }
                         Spacer()
+                        Text("已载入 \(model.libraryTracks.count) / \(model.toplistTotal)")
                     }
                     .font(.system(size: 10.5).monospacedDigit())
                     .foregroundStyle(.tertiary)
@@ -1249,19 +1260,33 @@ private struct PlayerBarView: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            artwork
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(player.currentTrack?.title ?? "未在播放")
-                    .font(.system(size: 12, weight: player.currentTrack == nil ? .regular : .semibold))
-                    .foregroundStyle(player.currentTrack == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            // Artwork, title and artist are one target: clicking any of them opens the song's own
+            // page, and clicking again closes it. It is the whole left block, not three small links.
+            Button {
+                model.toggleTrackDetail()
+            } label: {
+                HStack(spacing: 11) {
+                    artwork
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(player.currentTrack?.title ?? "未在播放")
+                            .font(.system(size: 12, weight: player.currentTrack == nil ? .regular : .semibold))
+                            .foregroundStyle(player.currentTrack == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                        Text(subtitle)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 170, alignment: .leading)
+                }
+                .contentShape(Rectangle())
             }
-            .frame(width: 170, alignment: .leading)
+            .buttonStyle(.plain)
+            .disabled(player.currentTrack == nil)
+            .help("歌曲详情")
+            .onHover { inside in
+                if inside, player.currentTrack != nil { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
 
             transport
 
@@ -1306,7 +1331,10 @@ private struct PlayerBarView: View {
             .buttonStyle(.plain)
             .help("播放模式")
 
-            // Queue lives at the far right of the player bar: it belongs to playback, not navigation.
+            // Queue and lyrics live at the far right of the player bar: both belong to playback,
+            // not navigation. 「词」 sits to the queue's right and toggles — pressing it while the
+            // lyrics are open returns to the list. A word rather than an SF Symbol because 词 is what
+            // a listener says.
             Button {
                 model.showQueue.toggle()
             } label: {
@@ -1322,6 +1350,19 @@ private struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .help("播放队列")
+
+            Button {
+                model.toggleLyrics()
+            } label: {
+                Text("词")
+                    .font(.system(size: 11, weight: model.pane == .lyrics ? .semibold : .regular))
+                    .foregroundStyle(model.pane == .lyrics ? palette.accent : .secondary)
+                    .frame(width: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(player.currentTrack == nil)
+            .help(model.pane == .lyrics ? "回到列表" : "查看歌词")
         }
         .padding(.horizontal, 12)
         .frame(height: Theme.Metrics.playerBarHeight)
@@ -1461,7 +1502,8 @@ private struct NoticeBar: View {
     }
 }
 
-private struct StatusPane: View {
+/// Shared by every pane: an empty or failed area always explains itself in words.
+struct StatusPane: View {
     let title: String
     let message: String?
     /// When the pane is empty rather than broken, the app's own mark stands in for an icon, so the
