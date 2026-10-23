@@ -1,3 +1,5 @@
+<img src="Assets/icon/AppIcon-1024.png" width="72" align="left" alt="bbMusic">
+
 # bbMusic
 
 macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
@@ -95,6 +97,8 @@ open dist/bbMusic.app
 ```
 
 `NODE_BIN=/path/to/node ./Scripts/build-app.sh` 可指定要内嵌的 Node。
+
+图标源在 `Assets/icon/AppIcon.svg`，由 `Scripts/make-icon.py` 生成（需要 `brew install librsvg` 提供 `rsvg-convert`）；构建只是把已提交的 `AppIcon.icns` 拷进 bundle，平时改图标才需要跑它。
 
 ## Last.fm
 

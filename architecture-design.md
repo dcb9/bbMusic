@@ -136,6 +136,7 @@ flowchart LR
 
 - **无沙盒、不公证**（自用构建）：主进程可直接 `Process` 启动子进程、可访问应用支持目录。
 - **Node 运行时随包分发**：`Contents/Resources/node/bin/node`（arm64）+ `Contents/Resources/qq-api/`（打包后的 sidecar 与 `node_modules`）。用户无需自备 Node。
+- **应用图标随包分发**：`Contents/Resources/AppIcon.icns`，`Info.plist` 的 `CFBundleIconFile` 指向它。图标源是 `Assets/icon/AppIcon.svg`，由 `Scripts/make-icon.py` 生成：深林绿底板 + 骨白的重降号 𝄫，**满幅绘制不自己画圆角**（macOS 26 给应用图标自己套遮罩与高光，再画一层就会变成方中套方）。构建只做拷贝，重生成图标才需要 `rsvg-convert`。
 - **启动顺序**：应用启动 → 拉起 sidecar → 读到端口后探测 `/login/status` → 已登录则加载侧边栏数据，未登录则引导扫码。
 - **退出顺序**：先停播放、flush 待提交队列，再向 sidecar 发终止信号并等待退出（超时则强杀）。
 

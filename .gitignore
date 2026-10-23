@@ -10,3 +10,9 @@ sidecar/node_modules/
 
 # Local credentials, never committed
 lastfm.json
+
+# Python bytecode from the asset scripts
+__pycache__/
+
+# Icon build intermediates (regenerate with Scripts/make-icon.py)
+Assets/icon/AppIcon.iconset/

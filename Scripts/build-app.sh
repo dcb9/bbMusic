@@ -29,6 +29,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key><string>$APP_NAME</string>
     <key>CFBundleDisplayName</key><string>bbMusic</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>local.bbmusic.app</string>
     <key>CFBundleExecutable</key><string>$APP_NAME</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -50,6 +51,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+echo "==> Embedding icon"
+cp "$ROOT/Assets/icon/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> Embedding sidecar"
 SIDECAR_SRC="$ROOT/sidecar"

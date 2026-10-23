@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"
+     viewBox="0 0 1024 1024">
+  <title>bbMusic</title>
+  <defs>
+    <linearGradient id="plate" x1="0.10" y1="0" x2="0.32" y2="1">
+      <stop offset="0" stop-color="#3A6650"/>
+      <stop offset="0.55" stop-color="#274A38"/>
+      <stop offset="1" stop-color="#183222"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.13"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.015"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#plate)"/>
+  <path d="M 182.00,239.70 A 29.70,29.70 0 0 1 241.40,239.70 L 241.40,439.52 C 341.06,434.69 440.72,530.12 440.72,608.64 C 440.72,711.32 311.16,750.58 241.40,753.60 L 241.40,784.30 A 29.70,29.70 0 0 1 182.00,784.30 L 182.00,239.70 Z M 578.00,239.70 A 29.70,29.70 0 0 1 637.40,239.70 L 637.40,439.52 C 737.06,434.69 836.72,530.12 836.72,608.64 C 836.72,711.32 707.16,750.58 637.40,753.60 L 637.40,784.30 A 29.70,29.70 0 0 1 578.00,784.30 L 578.00,239.70 Z" fill="#F7F2E7"/>
+  <rect width="1024" height="1024" fill="url(#sheen)"/>
+</svg>
