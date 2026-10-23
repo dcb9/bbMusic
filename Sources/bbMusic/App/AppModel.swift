@@ -477,6 +477,36 @@ final class AppModel: ObservableObject {
     /// How many tracks the open chart claims to have.
     var toplistTotal: Int { routes.current?.toplistTotal ?? 0 }
 
+    /// What the window's title bar says the user is looking at: the page's own name when a detail
+    /// page is open, otherwise the section. The count is included where one is meaningful.
+    var locationTitle: String {
+        switch route {
+        case .toplist(let toplist):
+            return toplistTotal > 0 ? "\(toplist.title) · \(toplistTotal) 首" : toplist.title
+        case .playlist(let playlist):
+            return "\(playlist.name) · \(libraryTracks.count) 首"
+        case .searchPlaylist(let playlist):
+            return "\(playlist.name) · \(libraryTracks.count) 首"
+        case .album(let album):
+            return album.name
+        case .artist(let artist):
+            return artist.name
+        case nil:
+            switch pane {
+            case .lyrics:
+                return player.currentTrack.map { "歌词 · \($0.title)" } ?? "歌词"
+            case .trackDetail:
+                return player.currentTrack.map { "歌曲详情 · \($0.title)" } ?? "歌曲详情"
+            case .list:
+                break
+            }
+            if showQueue { return "播放队列 · \(player.queue.count) 首" }
+            if section == .daily { return "每日推荐 · \(libraryTracks.count) 首" }
+            if section == .liked { return "我喜欢 · \(libraryTracks.count) 首" }
+            return section.title
+        }
+    }
+
     /// Whether a chart is open. A chart is the only page that reports load progress.
     var isChartPage: Bool {
         if case .toplist? = route { return true }

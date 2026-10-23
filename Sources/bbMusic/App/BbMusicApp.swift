@@ -38,6 +38,11 @@ struct BbMusicApp: App {
                 }
             }
         }
+        // A hidden title bar: the window has no chrome of its own, the content view fills the whole
+        // frame, and the traffic lights float over whatever the app draws there. `RootView` draws the
+        // bar itself, in the sidebar's green, so the window reads as one surface instead of a themed
+        // page inside a grey system frame.
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1000, height: 640)
 
         Settings {

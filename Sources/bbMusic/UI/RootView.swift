@@ -13,9 +13,15 @@ struct RootView: View {
             HStack(spacing: 0) {
                 SidebarView(model: model, player: player)
                     .frame(width: Theme.Metrics.sidebarWidth)
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(palette.content)
+                VStack(spacing: 0) {
+                    // Level with the sidebar's plate, so the two columns start their content on the
+                    // same line and the top strip reads as one bar across the window.
+                    ContentTopBar(model: model)
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(palette.content)
             }
             if let success = model.writeSuccess {
                 HStack(spacing: 6) {
@@ -63,6 +69,10 @@ struct RootView: View {
         .background(palette.content)
         .tint(palette.accent)
         .environment(\.palette, palette)
+        .background(WindowChrome())
+        // The window's content starts at the very top edge, so the sidebar's plate reaches it and the
+        // traffic lights float over it instead of sitting in a system strip of their own.
+        .ignoresSafeArea(edges: .top)
     }
 
     @ViewBuilder
@@ -152,6 +162,9 @@ private struct SidebarView: View {
     var body: some View {
         let side = palette.sidebar
         VStack(alignment: .leading, spacing: 0) {
+            // The window has no system title bar: this plate reaches the top edge, and the app's
+            // identity sits in the strip the traffic lights float over.
+            TitleBarView(model: model, player: player)
             // No platform banner: the account state belongs at the bottom, next to the other one.
             // 每日推荐 and 排行榜 were never implemented; their entries only ever led to a
             // placeholder, so they are gone rather than left as dead ends.

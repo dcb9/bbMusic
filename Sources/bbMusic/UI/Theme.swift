@@ -57,6 +57,10 @@ enum Theme {
     enum Metrics {
         /// Widened by 6pt: the green plate needs a little more air around its labels.
         static let sidebarWidth: CGFloat = 216
+        /// The app draws its own title bar; this is how tall it is. A standard macOS title bar is
+        /// 28pt, and the traffic lights are centred in it — matching that height is what makes the
+        /// green plate reach the top edge of the window instead of leaving a grey strip above it.
+        static let titleBarHeight: CGFloat = 28
         static let playerBarHeight: CGFloat = 60
         /// Artwork cards. 10pt reads as a record sleeve rather than a button.
         static let cardCornerRadius: CGFloat = 10
