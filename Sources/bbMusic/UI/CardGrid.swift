@@ -43,11 +43,12 @@ struct MediaCard: View {
     var placeholderSymbol: String = "music.note"
     var side: CGFloat = 120
     var isSelected: Bool = false
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardCornerRadius)
                     .fill(Color.primary.opacity(0.08))
                 if let artworkURL {
                     AsyncImage(url: artworkURL) { phase in
@@ -61,7 +62,7 @@ struct MediaCard: View {
                             ProgressView().controlSize(.small).scaleEffect(0.6)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardCornerRadius))
                 } else {
                     // No artwork at all: show the placeholder straight away rather than a spinner
                     // that would never resolve.
@@ -72,8 +73,8 @@ struct MediaCard: View {
             }
             .frame(width: side, height: side)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardCornerRadius)
+                    .stroke(isSelected ? palette.accent : Color.clear, lineWidth: 2)
             )
 
             VStack(alignment: .leading, spacing: 1) {

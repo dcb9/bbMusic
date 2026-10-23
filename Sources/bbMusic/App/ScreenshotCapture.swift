@@ -13,6 +13,20 @@ enum ScreenshotCapture {
         CommandLine.arguments.contains("--capture-screenshots")
     }
 
+    /// `--appearance dark` renders the dark palette; the default follows the system.
+    ///
+    /// Both appearances ship, so both need a reproducible capture — driving the system setting from
+    /// a script would change the user's whole desktop for the duration of the run.
+    static var requestedAppearance: NSAppearance? {
+        guard let index = CommandLine.arguments.firstIndex(of: "--appearance"),
+              index + 1 < CommandLine.arguments.count else { return nil }
+        switch CommandLine.arguments[index + 1] {
+        case "dark": return NSAppearance(named: .darkAqua)
+        case "light": return NSAppearance(named: .aqua)
+        default: return nil
+        }
+    }
+
     static var outputDirectory: URL {
         if let index = CommandLine.arguments.firstIndex(of: "--capture-screenshots"),
            index + 1 < CommandLine.arguments.count {
@@ -24,6 +38,10 @@ enum ScreenshotCapture {
     static func run(model: AppModel) async -> Int32 {
         let directory = outputDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        if let appearance = requestedAppearance {
+            NSApp.appearance = appearance
+        }
 
         // A fixed size makes the screenshots comparable run to run.
         await setWindowSize(CGSize(width: 1180, height: 760))

@@ -5,21 +5,23 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let palette = Palette.resolve(colorScheme)
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 SidebarView(model: model, player: player)
-                    .frame(width: 210)
-                Divider()
+                    .frame(width: Theme.Metrics.sidebarWidth)
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(palette.content)
             }
             if let success = model.writeSuccess {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 11))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(palette.accent)
                     Text(success)
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
@@ -27,7 +29,7 @@ struct RootView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .background(Color.green.opacity(0.08))
+                .background(palette.accent.opacity(0.10))
                 .transition(.opacity)
             }
             Divider()
@@ -35,7 +37,9 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: model.writeSuccess)
         .frame(minWidth: 820, minHeight: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(palette.content)
+        .tint(palette.accent)
+        .environment(\.palette, palette)
     }
 
     @ViewBuilder
@@ -96,8 +100,10 @@ struct RootView: View {
 private struct SidebarView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
+    @Environment(\.palette) private var palette
 
     var body: some View {
+        let side = palette.sidebar
         VStack(alignment: .leading, spacing: 0) {
             // No platform banner: the account state belongs at the bottom, next to the other one.
             // 每日推荐 and 排行榜 were never implemented; their entries only ever led to a
@@ -108,7 +114,9 @@ private struct SidebarView: View {
             Spacer()
 
             VStack(spacing: 0) {
-                Divider()
+                Rectangle()
+                    .fill(side.divider)
+                    .frame(height: 1)
                 statusRow(
                     label: model.connection.isConnected
                         ? "QQ 音乐 · \(model.connection.label)"
@@ -127,14 +135,16 @@ private struct SidebarView: View {
                 }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(side.background)
     }
 
     private func statusRow(label: String, connected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let side = palette.sidebar
+        return Button(action: action) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(connected ? Color.green : Color.secondary.opacity(0.4))
+                    .fill(connected ? side.statusDot : side.tertiaryText.opacity(0.6))
                     .frame(width: 6, height: 6)
                 Text(label)
                     .font(.system(size: 10.5))
@@ -144,21 +154,23 @@ private struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(side.secondaryText)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
 
     private func section(_ title: String, items: [AppModel.Section]) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        let side = palette.sidebar
+        return VStack(alignment: .leading, spacing: 1) {
             Text(title.uppercased())
                 .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(side.tertiaryText)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 3)
 
             ForEach(items) { item in
+                let isActive = model.section == item
                 Button {
                     Task { await model.selectSection(item) }
                 } label: {
@@ -166,16 +178,17 @@ private struct SidebarView: View {
                         Image(systemName: item.symbol)
                             .font(.system(size: 11))
                             .frame(width: 15)
-                            .foregroundStyle(model.section == item ? Color.accentColor : .secondary)
+                            .foregroundStyle(isActive ? side.accent : side.tertiaryText)
                         Text(item.title)
-                            .font(.system(size: 12, weight: model.section == item ? .semibold : .regular))
+                            .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                            .foregroundStyle(isActive ? side.text : side.secondaryText)
                         Spacer()
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(model.section == item ? Color.primary.opacity(0.08) : .clear)
+                            .fill(isActive ? side.selection : .clear)
                     )
                     .contentShape(Rectangle())
                 }
@@ -192,6 +205,7 @@ private struct SearchPane: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
     @FocusState private var searchFocused: Bool
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -235,7 +249,8 @@ private struct SearchPane: View {
                     message: model.query.isEmpty
                         ? "输入关键词后回车。可以切换搜索歌曲、专辑、歌单或歌手。"
                         : "换个关键词，或换一种搜索类型试试。",
-                    symbol: "magnifyingglass"
+                    symbol: nil,
+                    usesMark: true
                 )
             } else {
                 results
@@ -306,7 +321,7 @@ private struct SearchPane: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.03))
+        .background(palette.filterBar)
     }
 
     private func filterMenu(
@@ -326,12 +341,12 @@ private struct SearchPane: View {
                 Text(title).font(.system(size: 10.5, weight: isActive ? .semibold : .regular))
                 Image(systemName: "chevron.down").font(.system(size: 7))
             }
-            .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            .foregroundStyle(isActive ? palette.accent : .secondary)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
+                    .fill(isActive ? palette.accent.opacity(0.14) : palette.chip)
             )
         }
         .menuStyle(.borderlessButton)
@@ -471,15 +486,13 @@ private struct SearchPane: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Type selector first: it decides what the query means.
-            Picker("", selection: $model.searchKind) {
-                ForEach(SearchKind.allCases) { kind in
-                    Text(kind.label).tag(kind)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 260)
+            // Type selector first: it decides what the query means. Drawn with the palette rather
+            // than as a system segmented control, which ignores tint and stayed system grey.
+            ThemedSegmentedControl(
+                selection: $model.searchKind,
+                options: SearchKind.allCases.map { ($0, $0.label) },
+                width: 260
+            )
 
             Spacer()
 
@@ -508,7 +521,7 @@ private struct SearchPane: View {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.7))
+                    .fill(palette.field)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.primary.opacity(0.1), lineWidth: 1)
@@ -588,7 +601,8 @@ private struct TracksPane: View {
                 StatusPane(
                     title: emptyTitle,
                     message: emptyMessage,
-                    symbol: "music.note.list"
+                    symbol: nil,
+                    usesMark: true
                 )
             } else {
                 TrackList(
@@ -667,7 +681,7 @@ private struct PlaylistsPane: View {
             } else if let error = model.libraryError {
                 StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
             } else if model.playlists.isEmpty {
-                StatusPane(title: "还没有歌单", message: "在 QQ 音乐里创建或收藏歌单后会出现在这里。", symbol: "music.note.list")
+                StatusPane(title: "还没有歌单", message: "在 QQ 音乐里创建或收藏歌单后会出现在这里。", symbol: nil, usesMark: true)
             } else {
                 CardGrid(items: model.playlists) { playlist in
                     Button {
@@ -711,7 +725,7 @@ private struct AlbumsPane: View {
             } else if let error = model.libraryError {
                 StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
             } else if model.albums.isEmpty {
-                StatusPane(title: "还没有收藏的专辑", message: "在 QQ 音乐里收藏专辑后会出现在这里。", symbol: "square.stack")
+                StatusPane(title: "还没有收藏的专辑", message: "在 QQ 音乐里收藏专辑后会出现在这里。", symbol: nil, usesMark: true)
             } else {
                 CardGrid(items: model.albums) { album in
                     Button {
@@ -756,7 +770,7 @@ private struct ChartsPane: View {
             } else if let error = model.libraryError {
                 StatusPane(title: "载入失败", message: error, symbol: "exclamationmark.triangle")
             } else if model.toplists.isEmpty {
-                StatusPane(title: "没有取到排行榜", message: "检查网络或登录状态。", symbol: "list.number")
+                StatusPane(title: "没有取到排行榜", message: "检查网络或登录状态。", symbol: nil, usesMark: true)
             } else {
                 CardGrid(items: model.toplists) { toplist in
                     Button {
@@ -880,14 +894,11 @@ private struct ArtistDetailPane: View {
                 Spacer()
             }
 
-            Picker("", selection: $model.artistTab) {
-                ForEach(AppModel.ArtistTab.allCases) { tab in
-                    Text(tab.label).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 220)
+            ThemedSegmentedControl(
+                selection: $model.artistTab,
+                options: AppModel.ArtistTab.allCases.map { ($0, $0.label) },
+                width: 220
+            )
         }
         .padding(.horizontal, 14)
         .padding(.top, 9)
@@ -967,6 +978,7 @@ private struct QueueRow: View {
     let isCurrent: Bool
     let isPlaying: Bool
     let isSelected: Bool
+    @Environment(\.palette) private var palette
 
     var body: some View {
         HStack(spacing: 10) {
@@ -974,7 +986,7 @@ private struct QueueRow: View {
                 if isCurrent {
                     Image(systemName: isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(palette.accent)
                 } else {
                     Text("\(index + 1)")
                         .font(.system(size: 11).monospacedDigit())
@@ -998,8 +1010,8 @@ private struct QueueRow: View {
                 .frame(width: 44, alignment: .trailing)
         }
         .padding(.horizontal, 14)
-        .frame(height: 29)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : (isCurrent ? Color.primary.opacity(0.06) : .clear))
+        .frame(height: Theme.Metrics.rowMinHeight)
+        .background(isSelected ? palette.accent.opacity(0.14) : (isCurrent ? Color.primary.opacity(0.06) : .clear))
         .contentShape(Rectangle())
     }
 }
@@ -1095,6 +1107,7 @@ private struct TrackRow: View {
     var onToggleLike: () -> Void = {}
     var onOpenArtist: (String, String) -> Void = { _, _ in }
     var onOpenAlbum: (String, String) -> Void = { _, _ in }
+    @Environment(\.palette) private var palette
 
     var body: some View {
         let info = TrackDisplay.info(for: track)
@@ -1103,7 +1116,7 @@ private struct TrackRow: View {
                 if isCurrent {
                     Image(systemName: isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(palette.accent)
                 } else {
                     Text("\(index + 1)")
                         .font(.system(size: 11).monospacedDigit())
@@ -1165,7 +1178,7 @@ private struct TrackRow: View {
             } label: {
                 Image(systemName: isLiked ? "heart.fill" : "heart")
                     .font(.system(size: 11))
-                    .foregroundStyle(isLiked ? Color.accentColor : Color.secondary.opacity(0.5))
+                    .foregroundStyle(isLiked ? palette.accent : Color.secondary.opacity(0.5))
             }
             .buttonStyle(.plain)
             .frame(width: 20)
@@ -1178,13 +1191,13 @@ private struct TrackRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
-        .frame(minHeight: 29)
+        .frame(minHeight: Theme.Metrics.rowMinHeight)
         .background(rowBackground)
         .contentShape(Rectangle())
     }
 
     private var rowBackground: Color {
-        if isSelected { return Color.accentColor.opacity(0.14) }
+        if isSelected { return palette.accent.opacity(0.14) }
         if isCurrent { return Color.primary.opacity(0.06) }
         return .clear
     }
@@ -1195,6 +1208,7 @@ private struct TrackRow: View {
 private struct PlayerBarView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
+    @Environment(\.palette) private var palette
 
     var body: some View {
         HStack(spacing: 11) {
@@ -1250,7 +1264,7 @@ private struct PlayerBarView: View {
             } label: {
                 Image(systemName: player.repeatMode.symbol)
                     .font(.system(size: 11))
-                    .foregroundStyle(player.repeatMode == .off ? .secondary : Color.accentColor)
+                    .foregroundStyle(player.repeatMode == .off ? .secondary : palette.accent)
             }
             .buttonStyle(.plain)
             .help("播放模式")
@@ -1267,14 +1281,14 @@ private struct PlayerBarView: View {
                             .font(.system(size: 9.5).monospacedDigit())
                     }
                 }
-                .foregroundStyle(model.showQueue ? Color.accentColor : .secondary)
+                .foregroundStyle(model.showQueue ? palette.accent : .secondary)
             }
             .buttonStyle(.plain)
             .help("播放队列")
         }
         .padding(.horizontal, 12)
-        .frame(height: 58)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(height: Theme.Metrics.playerBarHeight)
+        .background(palette.content)
     }
 
     /// Quality picker. Lists what the current track can actually be served at, with file sizes, so
@@ -1323,7 +1337,7 @@ private struct PlayerBarView: View {
     private var artwork: some View {
         AsyncImage(url: player.currentTrack?.artworkURL) { phase in
             ZStack {
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: Theme.Metrics.artworkCornerRadius)
                     .fill(Color.primary.opacity(0.08))
                 if let image = phase.image {
                     image.resizable().scaledToFill()
@@ -1335,7 +1349,7 @@ private struct PlayerBarView: View {
             }
         }
         .frame(width: 38, height: 38)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.artworkCornerRadius))
     }
 
     private var transport: some View {
@@ -1349,7 +1363,7 @@ private struct PlayerBarView: View {
             Button { player.togglePlayPause() } label: {
                 ZStack {
                     Circle()
-                        .fill(player.currentTrack == nil ? Color.secondary.opacity(0.25) : Color.primary)
+                        .fill(player.currentTrack == nil ? Color.secondary.opacity(0.25) : palette.playButton)
                         .frame(width: 28, height: 28)
                     if player.isBuffering && player.currentTrack != nil {
                         ProgressView()
@@ -1358,7 +1372,7 @@ private struct PlayerBarView: View {
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 11))
-                            .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                            .foregroundStyle(palette.playButtonGlyph)
                     }
                 }
             }
@@ -1406,18 +1420,27 @@ private struct NoticeBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
-        .background(Color.orange.opacity(0.08))
+        .background(Color.orange.opacity(0.10))
     }
 }
 
 private struct StatusPane: View {
     let title: String
     let message: String?
+    /// When the pane is empty rather than broken, the app's own mark stands in for an icon, so the
+    /// window and the Dock use one symbol. Errors keep their SF Symbol.
     let symbol: String?
+    var usesMark: Bool = false
+    @Environment(\.palette) private var palette
 
     var body: some View {
-        VStack(spacing: 8) {
-            if let symbol {
+        VStack(spacing: 9) {
+            if usesMark {
+                DoubleFlatMark()
+                    .fill(palette.accent.opacity(0.55))
+                    .frame(width: 44, height: 44)
+                    .padding(.bottom, 2)
+            } else if let symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 20))
                     .foregroundStyle(.tertiary)
@@ -1429,7 +1452,7 @@ private struct StatusPane: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
+                    .frame(maxWidth: 320)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -5,6 +5,7 @@ import SwiftUI
 struct LyricsView: View {
     @ObservedObject var player: Player
     let onBack: () -> Void
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,10 +34,11 @@ struct LyricsView: View {
             Divider()
 
             if player.lyrics.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "text.quote")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.tertiary)
+                VStack(spacing: 9) {
+                    DoubleFlatMark()
+                        .fill(palette.accent.opacity(0.55))
+                        .frame(width: 44, height: 44)
+                        .padding(.bottom, 2)
                     Text("这首歌没有歌词")
                         .font(.system(size: 12.5, weight: .semibold))
                     Text("可能还没有上传歌词，或者接口暂时取不到。")
@@ -69,7 +71,7 @@ struct LyricsView: View {
                             Text(line.text)
                                 .font(.system(size: index == currentIndex ? 14 : 12,
                                               weight: index == currentIndex ? .semibold : .regular))
-                                .foregroundStyle(index == currentIndex ? .primary : .secondary)
+                                .foregroundStyle(index == currentIndex ? palette.accent : .secondary)
                                 .multilineTextAlignment(.center)
                             if let translation = line.translation, !translation.isEmpty {
                                 Text(translation)

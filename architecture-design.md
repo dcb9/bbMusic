@@ -85,6 +85,8 @@ flowchart LR
 
 **依赖方向**：`UI → Playback / Platform / Lyrics`，`Playback → Platform`（只为取流地址），`Scrobble → Storage`。没有任何模块反向依赖 `UI`。`QQMusicPlatform` 是唯一知道 QQ 音乐存在的地方——换成 Spotify 时它整体替换，其余模块不变。
 
+**配色是 `UI` 内部的一层**：`Theme.swift` 定义浅色/深色两套 `Palette`（内容底色、输入框、筛选条、播放键、强调色、侧边栏面板），由 `RootView` 按 `colorScheme` 解析一次，通过 `EnvironmentValues.palette` 往下传。视图不再直接写 `Color.accentColor` 或 `NSColor` 系统色——那些不跟随主题。侧边栏的文字色单独一套：它坐在深绿底上，系统的 `.secondary` / `.tertiary` 在浅色外观下会解析成深灰，读不出来。
+
 ## 数据流：播放一首歌
 
 1. 用户在列表里点一首 → `Playback` 把它设为当前曲目，并把列表其余部分作为队列（`Playback` 是队列的唯一真相）。

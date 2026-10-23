@@ -6,7 +6,11 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 
 一个窗口、三个区域、没有广告位和直播入口。曲库来自自托管的 QQ 音乐 API，播放记录交给 Last.fm。
 
-![搜索](docs/screenshots/01-search.png)
+界面跟随图标：深林绿的侧边栏 + 暖纸白的内容区，浅色与深色外观各一套。
+
+| 浅色 | 深色 |
+|---|---|
+| ![浅色](docs/screenshots/01-search.png) | ![深色](docs/screenshots/dark/01-search.png) |
 
 ## 功能
 
@@ -79,6 +83,7 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 
 ```sh
 ./dist/bbMusic.app/Contents/MacOS/bbMusic --capture-screenshots docs/screenshots
+./dist/bbMusic.app/Contents/MacOS/bbMusic --appearance dark --capture-screenshots docs/screenshots/dark
 ```
 
 ## 构建与运行
@@ -119,6 +124,8 @@ open dist/bbMusic.app
 ```
 
 逐步输出 `PASS`/`FAIL`，退出码即结果。覆盖：sidecar 启动、登录态、搜索与分页、四类搜索、库读取、专辑/歌单/歌手、古典推导、播放与音质、每日推荐、排行榜翻页、红心写入往返、MCP 端点、Last.fm 凭据与记录规则。
+
+截图是同一套办法：`--capture-screenshots` 在 App 内渲染每一页，`--appearance dark` 让同一组页面在深色外观下再跑一遍——不需要改动系统外观设置。
 
 ## 未登录时
 
