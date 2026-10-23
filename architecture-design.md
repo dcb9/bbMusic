@@ -200,7 +200,7 @@ QQ 音乐其余位置不提供结构化的作曲家/作品号/演奏者字段。
 
 **外观是用户偏好，不是系统事实。** 调色板本来就分浅色/深色两套，只差一个不改变整个桌面的切换方式：`AppearanceMode`（跟随系统 / 浅色 / 深色）存在本地 `appearance.json`，启动时在画第一帧之前套用 `NSApp.appearance`，所以不会先闪一下系统的外观。视图侧不用改——`RootView` 一直是从 `colorScheme` 解析调色板的，`NSApp.appearance` 改变的正是这个环境值。截图模式在 `start()` 之后才强制外观，避免把一次截图的选择写成用户偏好。
 
-**窗口没有系统标题栏。** `.windowStyle(.hiddenTitleBar)` 去掉系统的灰色标题条，内容区 `ignoresSafeArea(edges: .top)` 顶到窗口最上沿，于是侧边栏的绿板一直延伸到窗口顶端，红绿灯悬浮在它上面（和访达的侧边栏同样的做法）。顶栏由两段拼成、高度一致：左段是绿板上的 app 名，右段是纸白上的当前位置（`AppModel.locationTitle`：详情页用自己的名字，否则用栏目名，带上有意义的数量）。两段都铺了 `WindowDragArea`（`mouseDownCanMoveWindow`），所以拖顶栏能移动窗口，而画在上面的按钮仍能收到自己的点击。
+**窗口没有系统标题栏。** `.windowStyle(.hiddenTitleBar)` 去掉系统的灰色标题条，内容区 `ignoresSafeArea(edges: .top)` 顶到窗口最上沿，于是侧边栏的绿板一直延伸到窗口顶端，红绿灯悬浮在它上面（和访达的侧边栏同样的做法）。顶栏只有一段：绿板上的 app 名，铺了 `WindowDragArea`（`mouseDownCanMoveWindow`），拖它能移动窗口，而画在上面的按钮仍能收到自己的点击。内容区**没有**横向标题条——每页自己的头部已经说了它是什么，侧边栏的选中态也已经说明用户在哪，再横一条同样的名字纯属重复。
 
 系统标题栏试过两条路都不可靠：直接改 `titlebarAppearsTransparent` 后，AppKit 仍会在内容之上保留 28pt 的条带，自绘顶栏被挤到它下面，红绿灯悬在一片空的绿带上；用 `NSTitlebarAccessoryViewController` 把顶栏塞进真标题栏，则在窗口尺寸变化时反复重排、窗口会短暂消失。现在这条路不碰 AppKit 的视图层级，只依赖公开的窗口样式与安全区。
 

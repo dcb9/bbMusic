@@ -13,15 +13,13 @@ struct RootView: View {
             HStack(spacing: 0) {
                 SidebarView(model: model, player: player)
                     .frame(width: Theme.Metrics.sidebarWidth)
-                VStack(spacing: 0) {
-                    // Level with the sidebar's plate, so the two columns start their content on the
-                    // same line and the top strip reads as one bar across the window.
-                    ContentTopBar(model: model)
-                    content
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(palette.content)
+                    .frame(maxHeight: .infinity)
+                // No strip above the content: each page states what it is in its own header, and the
+                // sidebar already shows where the user is. A second copy of the same name across the
+                // top was pure repetition.
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(palette.content)
             }
             if let success = model.writeSuccess {
                 HStack(spacing: 6) {

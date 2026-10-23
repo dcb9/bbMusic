@@ -90,26 +90,3 @@ struct TitleBarView: View {
         .background(WindowDragArea())
     }
 }
-
-/// The strip that runs across the top of the content area, level with the sidebar's plate.
-///
-/// It carries what the system title bar used to: where the user is. Nothing else lives here — the
-/// pages below already own their own headers, and a second row of controls would be one too many.
-struct ContentTopBar: View {
-    @ObservedObject var model: AppModel
-    @Environment(\.palette) private var palette
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(model.locationTitle)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: Theme.Metrics.titleBarHeight)
-        .background(palette.content)
-        .background(WindowDragArea())
-    }
-}
