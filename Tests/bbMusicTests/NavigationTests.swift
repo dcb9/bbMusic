@@ -276,6 +276,27 @@ final class NavigationTests: XCTestCase {
         XCTAssertEqual(model.pane, .list)
     }
 
+    // MARK: - Chart header
+
+    func testChartHeaderReportsTheFullSize() async {
+        platform.toplistPages[0] = (tracks: (0..<20).map { Fixture.track("c\($0)") }, total: 100)
+        await model.selectSection(.charts)
+        await model.open(Fixture.toplist("t1", count: 100))
+
+        // The header states the chart's size; how much is loaded belongs to the progress line.
+        XCTAssertEqual(model.toplistTotal, 100)
+        XCTAssertEqual(model.libraryTracks.count, 20)
+        XCTAssertTrue(model.isChartPage)
+    }
+
+    func testLeavingAChartRestoresTheTrackCountHeader() async {
+        platform.toplistPages[0] = (tracks: (0..<20).map { Fixture.track("c\($0)") }, total: 100)
+        await model.selectSection(.charts)
+        await model.open(Fixture.toplist("t1", count: 100))
+        await model.open(Fixture.playlist("p1"))
+        XCTAssertFalse(model.isChartPage, "离开榜单后标题应回到曲目数")
+    }
+
     // MARK: - The sidebar is a way home
 
     func testSelectingTheSameSectionReturnsToItsTopPage() async {

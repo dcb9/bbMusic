@@ -14,10 +14,6 @@ struct TrackDetailPane: View {
     @ObservedObject var player: Player
     let onBack: () -> Void
     @Environment(\.palette) private var palette
-    /// A blurb is often several paragraphs (some run to thousands of characters). Showing it whole
-    /// buries the facts and makes the page feel like a press release, so it is clamped to a few
-    /// lines with an explicit way to read the rest.
-    @State private var introExpanded = false
 
     private var track: Track? { player.currentTrack }
 
@@ -27,7 +23,6 @@ struct TrackDetailPane: View {
             Divider()
             if let track {
                 content(track)
-                    .onChange(of: track.id) { _, _ in introExpanded = false }
             } else {
                 StatusPane(title: "没有正在播放的歌曲", message: "先双击一首歌，再回来看这里。", symbol: nil, usesMark: true)
             }
@@ -94,6 +89,9 @@ struct TrackDetailPane: View {
                         .fill(Color.primary.opacity(0.08))
                         .frame(height: 1)
                         .padding(.top, 24)
+                    // Shown in full. The page already scrolls, so a long blurb simply continues below
+                    // the fold instead of hiding behind a disclosure — one less state to manage, and
+                    // nothing the platform said is withheld.
                     VStack(alignment: .leading, spacing: 6) {
                         Text("简介")
                             .font(.system(size: 10.5))
@@ -102,17 +100,7 @@ struct TrackDetailPane: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .lineSpacing(4)
-                            .lineLimit(introExpanded ? nil : 4)
                             .fixedSize(horizontal: false, vertical: true)
-                        if intro.count > 80 {
-                            Button(introExpanded ? "收起" : "展开全部") {
-                                introExpanded.toggle()
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11))
-                            .foregroundStyle(palette.accent)
-                            .padding(.top, 2)
-                        }
                     }
                     .padding(.top, 16)
                 }

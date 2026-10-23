@@ -468,6 +468,20 @@ struct SelfTest {
             ))
         }
 
+        // 6c5e2. The queue is a song list like any other: its rows carry album and artist, and the
+        // heart can be toggled from there.
+        if model.connection.isConnected, !model.player.queue.isEmpty {
+            let rows = model.player.queue
+            let withAlbum = rows.filter { !$0.album.isEmpty }.count
+            let withArtist = rows.filter { !$0.artist.isEmpty }.count
+            let linkable = rows.filter { $0.artistID != nil && $0.albumID != nil }.count
+            steps.append(Step(
+                name: "queue-rows",
+                ok: withAlbum == rows.count && withArtist == rows.count,
+                detail: "\(rows.count) 首：专辑 \(withAlbum)/\(rows.count)，歌手 \(withArtist)/\(rows.count)，可点进歌手与专辑 \(linkable)/\(rows.count)"
+            ))
+        }
+
         // 6c5f. The song detail page's links: an artist name searches that artist, the album opens,
         // and the queue can be opened from the page and closed back to it.
         if model.connection.isConnected, let playing = model.player.currentTrack {

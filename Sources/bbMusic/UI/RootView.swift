@@ -587,7 +587,13 @@ private struct TracksPane: View {
                 }
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
-                if !model.libraryTracks.isEmpty {
+                // A chart states its full size; how much of it is loaded belongs to the progress line
+                // at the bottom, which also reports it.
+                if model.isChartPage, model.toplistTotal > 0 {
+                    Text("\(model.toplistTotal) 首")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else if !model.libraryTracks.isEmpty {
                     Text("\(model.libraryTracks.count) 首")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -635,9 +641,9 @@ private struct TracksPane: View {
                     player: player,
                     selectedID: $model.selectedTrackID,
                     showsDiscs: model.currentAlbum != nil,
-                    // A playlist's rows would all repeat the same or an irrelevant album, so the
-                    // column is hidden there; album pages and search results show it.
-                    showsAlbum: model.currentPlaylistName == nil,
+                    // Every song list shows the same columns: a playlist mixes albums, so the album
+                    // a track came from is exactly what tells them apart.
+                    showsAlbum: true,
                     onReachEnd: model.canLoadMoreToplist ? { Task { await model.loadMoreToplistTracks() } } : nil,
                     isLiked: model.isLiked,
                     onToggleLike: { track in Task { await model.toggleLike(track) } },
@@ -993,21 +999,33 @@ private struct QueuePane: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
-                            QueueRow(
+                        // The queue is a list of tracks like any other, so it uses the same row: album,
+                        // artist, heart and links all work here too. Keyed by track id rather than by
+                        // position, so removing an entry does not shuffle every row's identity.
+                        ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
+                            TrackRow(
                                 index: index,
                                 track: track,
-                                isCurrent: player.currentIndex == index,
-                                isPlaying: player.currentIndex == index && player.isPlaying,
-                                isSelected: model.selectedTrackID == track.id
+                                isCurrent: player.currentTrack?.id == track.id,
+                                isPlaying: player.currentTrack?.id == track.id && player.isPlaying,
+                                isSelected: model.selectedTrackID == track.id,
+                                showsAlbum: true,
+                                isLiked: model.isLiked(track),
+                                onToggleLike: { Task { await model.toggleLike(track) } },
+                                onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
+                                onOpenAlbum: { id, name, artist in
+                                    Task { await model.openAlbum(id: id, name: name, artist: artist) }
+                                }
                             )
-                            .onTapGesture(count: 2) {
-                                model.selectedTrackID = track.id
-                                player.play(tracks: player.queue, startingAt: index)
-                            }
+                            .simultaneousGesture(
+                                TapGesture(count: 2).onEnded {
+                                    model.selectedTrackID = track.id
+                                    player.play(tracks: player.queue, startingAt: index)
+                                }
+                            )
                             .onTapGesture { model.selectedTrackID = track.id }
                             .contextMenu {
-                                Button("移除") { player.removeFromQueue(at: IndexSet(integer: index)) }
+                                Button("从队列移除") { player.removeFromQueue(at: IndexSet(integer: index)) }
                                 Button("播放这首") { player.play(tracks: player.queue, startingAt: index) }
                             }
                             Divider().opacity(0.35)
@@ -1016,50 +1034,6 @@ private struct QueuePane: View {
                 }
             }
         }
-    }
-}
-
-private struct QueueRow: View {
-    let index: Int
-    let track: Track
-    let isCurrent: Bool
-    let isPlaying: Bool
-    let isSelected: Bool
-    @Environment(\.palette) private var palette
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Group {
-                if isCurrent {
-                    Image(systemName: isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(palette.accent)
-                } else {
-                    Text("\(index + 1)")
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .frame(width: 22, alignment: .trailing)
-
-            Text(track.title)
-                .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(track.artist)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(width: 150, alignment: .leading)
-            Text(track.durationText)
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .trailing)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: Theme.Metrics.rowMinHeight)
-        .background(isSelected ? palette.accent.opacity(0.14) : (isCurrent ? Color.primary.opacity(0.06) : .clear))
-        .contentShape(Rectangle())
     }
 }
 
