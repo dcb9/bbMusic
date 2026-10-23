@@ -45,6 +45,8 @@ enum ScreenshotCapture {
 
         // A fixed size makes the screenshots comparable run to run.
         await setWindowSize(CGSize(width: 1180, height: 760))
+        // The queue shot starts real playback; keep it quiet rather than taking over the machine.
+        model.player.volume = 0.1
         model.start()
         // Wait for the sidecar, then for the account so the pages have real data.
         _ = await waitUntil(timeout: 30) { model.sidecarState.port != nil }
@@ -101,6 +103,7 @@ enum ScreenshotCapture {
 
         // 8. Artist page
         shots.append(("08-artist", {
+            model.clearRoutes()
             model.section = .search
             if let found = try? await model.platform.search("周杰伦", kind: .singer, page: 1),
                let artist = found.artists.first {
@@ -110,25 +113,26 @@ enum ScreenshotCapture {
 
         // 9. Classical album detail — shows composer and disc structure
         shots.append(("09-album-classical", {
-            model.clearSearchDetail()
+            model.clearRoutes()
             model.section = .albums
             if let album = model.albums.first(where: {
                 $0.name.lowercased().contains("beethoven") || $0.name.contains("古典")
             }) ?? model.albums.first {
-                await model.openAlbum(album)
+                await model.open(album)
             }
         }))
 
         // 10. Now playing + queue
         shots.append(("10-queue", {
-            model.clearSearchDetail()
+            model.clearRoutes()
             model.section = .search
             model.searchKind = .song
             model.query = "稻香"
             await model.runSearch()
-            // Play the whole result list so the queue screenshot shows a real queue.
-            if !model.results.isEmpty {
-                model.player.play(tracks: model.results, startingAt: 0)
+            // Play through the same path the UI uses, so the queue shot shows what a user would
+            // actually get: the song's album, not the result list.
+            if let first = model.results.first {
+                await model.playFromSearch(first)
             }
             model.showQueue = true
         }))

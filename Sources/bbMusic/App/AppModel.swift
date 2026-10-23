@@ -69,10 +69,9 @@ final class AppModel: ObservableObject {
     /// Song results, kept for code paths that only deal in tracks (player, queue, MCP).
     var results: [Track] { searchResults.songs }
 
-    /// Whether search has drilled into an album, a found playlist, or an artist.
-    var hasSearchDetail: Bool {
-        selectedAlbum != nil || searchPlaylistDetail != nil || searchArtistDetail != nil
-    }
+    /// The detail pages above the section list. `routes.current` is what the content area shows and
+    /// `routes.pop()` is where 返回 goes, so the two can never disagree.
+    @Published private(set) var routes = RouteStack()
 
     enum ArtistTab: String, CaseIterable, Identifiable {
         case songs, albums
@@ -93,25 +92,17 @@ final class AppModel: ObservableObject {
     /// Library contents. Loaded once the account is connected.
     @Published private(set) var playlists: [Playlist] = []
     @Published private(set) var albums: [Album] = []
-    @Published private(set) var libraryTracks: [Track] = []
-    @Published private(set) var selectedPlaylist: Playlist?
-    @Published private(set) var selectedAlbum: Album?
+    /// The tracks of the current section (我喜欢, 每日推荐), before any detail page is opened.
+    @Published private(set) var sectionTracks: [Track] = []
+    @Published private(set) var sectionError: String?
     @Published private(set) var isLoadingLibrary = false
-    @Published private(set) var libraryError: String?
-    /// Classical credits for the album currently open, when the platform supplied them.
-    @Published private(set) var albumDetails: AlbumClassicalDetails?
-    /// Detail views reached from search, which are not part of the user's own library.
-    @Published private(set) var searchPlaylistDetail: SearchPlaylist?
-    @Published private(set) var searchArtistDetail: Artist?
-    /// Artist detail content.
-    @Published private(set) var artistSongs: [Track] = []
-    @Published private(set) var artistAlbums: [Album] = []
+    /// The tracks on screen: the open detail page's own list, or the section's.
+    var libraryTracks: [Track] { routes.current?.tracks ?? sectionTracks }
+    var libraryError: String? { routes.current?.error ?? sectionError }
+    /// Artist detail content. Lives on the stack entry so going back restores it without a request.
     @Published var artistTab: ArtistTab = .songs
     /// Daily recommendation and charts.
-    @Published private(set) var dailyTracks: [Track] = []
     @Published private(set) var toplists: [Toplist] = []
-    @Published private(set) var selectedToplist: Toplist?
-    @Published private(set) var toplistTotal = 0
     /// Optimistic like state, keyed by track id. Writes are applied here first so the heart
     /// responds instantly; a failed write reverts it and reports why.
     @Published private(set) var likeStates: [String: Bool] = [:]
@@ -126,26 +117,37 @@ final class AppModel: ObservableObject {
     private(set) lazy var mcp: MCPServer = MCPServer(model: self)
     /// Fixed loopback port so a client config does not change between launches.
     static let mcpPort: UInt16 = 43119
-    let platform: QQMusicPlatform
+    let platform: MusicPlatform
+    /// Where local state lives. Injected so tests never touch the real one.
+    let supportDirectory: URL
     private let sidecar: SidecarManager
     private var connectionTask: Task<Void, Never>?
 
-    init() {
-        let support = Self.supportDirectory()
-        let sidecarDirectory = Self.sidecarDirectory()
-        let manager = SidecarManager(sidecarDirectory: sidecarDirectory, supportDirectory: support)
+    /// QR sign-in is a QQ Music flow, not a `MusicPlatform` capability: a platform without it simply
+    /// has no sign-in sheet to show.
+    var qrLogin: QQMusicPlatform? { platform as? QQMusicPlatform }
+
+    init(
+        platform: MusicPlatform? = nil,
+        supportDirectory: URL? = nil,
+        sidecarDirectory: URL? = nil
+    ) {
+        let supportDirectory = supportDirectory ?? Self.defaultSupportDirectory()
+        let sidecarDirectory = sidecarDirectory ?? Self.defaultSidecarDirectory()
+        self.supportDirectory = supportDirectory
+        let manager = SidecarManager(sidecarDirectory: sidecarDirectory, supportDirectory: supportDirectory)
         self.sidecar = manager
-        self.platform = QQMusicPlatform(
+        self.platform = platform ?? QQMusicPlatform(
             baseURLProvider: { [weak manager] in
                 guard let port = manager?.state.port else { return nil }
                 return URL(string: "http://127.0.0.1:\(port)")
             },
-            tokenURL: support.appendingPathComponent("qq-session-token")
+            tokenURL: supportDirectory.appendingPathComponent("qq-session-token")
         )
-        self.player = Player(platform: platform)
+        self.player = Player(platform: self.platform)
         self.scrobbler = Scrobbler(
-            storeURL: support.appendingPathComponent("scrobble-queue.json"),
-            credentialsURL: LastFMCredentialsStore.fileURL(supportDirectory: support)
+            storeURL: supportDirectory.appendingPathComponent("scrobble-queue.json"),
+            credentialsURL: LastFMCredentialsStore.fileURL(supportDirectory: supportDirectory)
         )
 
         // Playback drives the scrobbler; the scrobbler never drives playback.
@@ -169,7 +171,7 @@ final class AppModel: ObservableObject {
 
     /// Bearer token for the MCP endpoint, generated once per install.
     var mcpToken: String {
-        let url = Self.supportDirectory().appendingPathComponent("mcp-token")
+        let url = supportDirectory.appendingPathComponent("mcp-token")
         if let existing = try? String(contentsOf: url, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
            existing.count >= 32 {
@@ -204,7 +206,7 @@ final class AppModel: ObservableObject {
 
     /// Shown in settings so the credential file is discoverable.
     var lastFMCredentialsPath: String {
-        LastFMCredentialsStore.fileURL(supportDirectory: Self.supportDirectory()).path
+        LastFMCredentialsStore.fileURL(supportDirectory: supportDirectory).path
     }
 
     func signOutQQMusic() async {
@@ -212,9 +214,8 @@ final class AppModel: ObservableObject {
         connection = .disconnected
         playlists = []
         albums = []
-        libraryTracks = []
-        selectedPlaylist = nil
-        selectedAlbum = nil
+        sectionTracks = []
+        clearRoutes()
     }
 
     // MARK: - Connection
@@ -238,7 +239,7 @@ final class AppModel: ObservableObject {
 
     func loadLibrary() async {
         isLoadingLibrary = true
-        libraryError = nil
+        sectionError = nil
         defer { isLoadingLibrary = false }
         do {
             async let lists = platform.playlists()
@@ -246,119 +247,98 @@ final class AppModel: ObservableObject {
             playlists = try await lists
             albums = try await saved
         } catch {
-            libraryError = error.localizedDescription
+            sectionError = error.localizedDescription
         }
     }
 
-    /// Loads a section's contents. Errors are reported in `libraryError` rather than thrown, so a
-    /// pane can show what went wrong without the app appearing broken.
+    // MARK: - Navigation
+    //
+    // A section list is the floor; every detail page sits on the route stack. Opening a page never
+    // changes `section`, so the sidebar keeps pointing at where the user started, and 返回 pops
+    // exactly one page — the same one that is on screen.
+
+    /// The page currently on screen, if any.
+    var route: Route? { routes.current?.route }
+
+    /// Switches the sidebar destination. Any detail pages belong to the place the user just left, so
+    /// the stack is dropped — including when the destination is already the current one, which makes
+    /// the sidebar act as "back to the top of this section".
+    ///
+    /// The previous section's tracks are cleared *before* awaiting: `libraryTracks` falls through to
+    /// them whenever no detail page is open, so leaving them in place showed one section's rows under
+    /// another section's title for the length of a request.
     func selectSection(_ section: Section) async {
         self.section = section
         pane = .list
         showQueue = false
-        selectedPlaylist = nil
-        selectedAlbum = nil
-        albumDetails = nil
-        libraryError = nil
-        guard connection.isConnected else {
-            libraryTracks = []
-            return
-        }
+        clearRoutes()
+        sectionTracks = []
+        sectionError = nil
+        guard connection.isConnected else { return }
         switch section {
         case .liked:
-            await loadTracks { try await platform.likedSongs() }
-            primeLikes(from: libraryTracks)
-        case .playlists:
-            libraryTracks = []
+            await loadSectionTracks { try await platform.likedSongs() }
+            primeLikes(from: sectionTracks)
         case .daily:
-            await loadTracks { try await platform.dailySongs() }
-        case .albums:
-            libraryTracks = []
+            await loadSectionTracks { try await platform.dailySongs() }
         case .charts:
-            libraryTracks = []
             await loadToplists()
-        case .search:
-            libraryTracks = []
+        case .playlists, .albums, .search:
+            break
         }
+    }
+
+    /// Goes back one detail page. On the bottom page there is nothing to go back to, so this does
+    /// nothing rather than navigating somewhere the user did not ask for.
+    func goBack() {
+        routes.pop()
+    }
+
+    /// Drops every detail page, returning the content area to the section list.
+    func clearRoutes() {
+        routes.removeAll()
+    }
+
+    /// Pushes a page and loads it. The result lands on the page that asked for it even if the user
+    /// has since opened something else on top — a slow response must never write into a page it did
+    /// not come from, and a page the user popped just discards its result.
+    private func push(_ route: Route, load: @escaping (Route, Int) async -> Void) async {
+        pane = .list
+        showQueue = false
+        let token = routes.push(route)
+        await load(route, token)
+    }
+
+    /// Applies a load result to the page that started it, and nowhere else.
+    private func updateRoute(_ token: Int, _ body: (inout RouteEntry) -> Void) {
+        routes.update(token: token, body)
     }
 
     func open(_ playlist: Playlist) async {
-        // Deliberately does not change `section`: opening a playlist from search results must not
-        // also move the sidebar selection, which previously made the playlist appear selected in
-        // the sidebar as if the user had navigated there.
-        pane = .list
-        selectedAlbum = nil
-        albumDetails = nil
-        selectedPlaylist = playlist
-        await loadTracks { try await platform.tracks(in: playlist) }
+        await push(.playlist(playlist)) { route, token in
+            await self.load(route: route, token: token) {
+                try await self.platform.tracks(in: playlist)
+            }
+        }
     }
 
     func open(_ album: Album) async {
-        section = .albums
-        pane = .list
-        selectedPlaylist = nil
-        selectedAlbum = album
-        albumDetails = nil
-        await loadTracks {
-            let result = try await platform.albumTracks(album)
-            albumDetails = result.details
-            return result.tracks
+        await push(.album(album)) { route, token in
+            await self.loadAlbum(route: route, album: album, token: token)
         }
     }
 
-    private func loadToplists() async {
-        isLoadingLibrary = true
-        libraryError = nil
-        defer { isLoadingLibrary = false }
-        do {
-            toplists = try await platform.toplists()
-        } catch {
-            libraryError = error.localizedDescription
+    /// Opens the album behind a row's album label.
+    ///
+    /// The row only carries an id and a name. The artist is taken from the row so the page header is
+    /// not blank while it loads, and the album is **replaced by the one the album endpoint describes**
+    /// once the tracks arrive — collecting it from here must not put a half-empty album in the
+    /// user's collection.
+    func openAlbum(id: String, name: String, artist: String) async {
+        let stub = Album(id: id, name: name, artist: artist, trackCount: 0, artworkURL: nil, year: nil)
+        await push(.album(stub)) { route, token in
+            await self.loadAlbum(route: route, album: stub, token: token)
         }
-    }
-
-    /// Opens a chart. Charts page by track offset, so the first page shows immediately and more
-    /// arrives when the list is scrolled to the end.
-    func open(_ toplist: Toplist) async {
-        selectedToplist = toplist
-        libraryTracks = []
-        libraryError = nil
-        toplistTotal = toplist.trackCount
-        isLoadingLibrary = true
-        defer { isLoadingLibrary = false }
-        do {
-            let page = try await platform.toplistTracks(toplist, offset: 0)
-            libraryTracks = page.tracks
-            toplistTotal = page.total
-        } catch {
-            libraryError = error.localizedDescription
-        }
-    }
-
-    /// Loads the next chart page when the list reaches its end.
-    func loadMoreToplistTracks() async {
-        guard let toplist = selectedToplist, !isLoadingMore else { return }
-        guard libraryTracks.count < toplistTotal else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-        do {
-            let page = try await platform.toplistTracks(toplist, offset: libraryTracks.count)
-            let existing = Set(libraryTracks.map(\.id))
-            libraryTracks += page.tracks.filter { !existing.contains($0.id) }
-            toplistTotal = page.total
-        } catch {
-            libraryError = error.localizedDescription
-        }
-    }
-
-    /// Whether the open chart has more tracks to fetch.
-    var canLoadMoreToplist: Bool {
-        selectedToplist != nil && libraryTracks.count < toplistTotal
-    }
-
-    /// Opens the album of the currently playing/selected track from a row's album label.
-    func openAlbum(id: String, name: String) async {
-        await openAlbum(Album(id: id, name: name, artist: "", trackCount: 0, artworkURL: nil, year: nil))
     }
 
     /// Opens an artist page from a row's artist label. The counts and bio arrive with the detail.
@@ -366,25 +346,161 @@ final class AppModel: ObservableObject {
         await open(Artist(id: id, name: name, songCount: 0, albumCount: 0, artworkURL: nil))
     }
 
-    /// Returns from a playlist/album detail to its list.
-    func closeDetail() {
-        selectedToplist = nil
-        selectedPlaylist = nil
-        selectedAlbum = nil
-        albumDetails = nil
-        libraryTracks = []
-        libraryError = nil
-    }
-
-    private func loadTracks(_ fetch: () async throws -> [Track]) async {
+    private func loadToplists() async {
         isLoadingLibrary = true
-        libraryError = nil
+        sectionError = nil
         defer { isLoadingLibrary = false }
         do {
-            libraryTracks = try await fetch()
+            toplists = try await platform.toplists()
         } catch {
-            libraryTracks = []
-            libraryError = error.localizedDescription
+            sectionError = error.localizedDescription
+        }
+    }
+
+    /// Opens a chart. Charts page by track offset, so the first page shows immediately and more
+    /// arrives when the list is scrolled to the end.
+    func open(_ toplist: Toplist) async {
+        await push(.toplist(toplist)) { _, token in
+            do {
+                let page = try await self.platform.toplistTracks(toplist, offset: 0)
+                self.updateRoute(token) { entry in
+                    entry.tracks = page.tracks
+                    entry.toplistTotal = page.total
+                    entry.error = nil
+                }
+            } catch {
+                self.updateRoute(token) { entry in
+                    entry.tracks = []
+                    entry.toplistTotal = toplist.trackCount
+                    entry.error = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Loads the next chart page when the list reaches its end.
+    func loadMoreToplistTracks() async {
+        guard case .toplist(let toplist)? = route,
+              let token = routes.current?.token,
+              !isLoadingMore
+        else { return }
+        let offset = libraryTracks.count
+        guard offset < toplistTotal else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let page = try await platform.toplistTracks(toplist, offset: offset)
+            let existing = Set(libraryTracks.map(\.id))
+            updateRoute(token) { entry in
+                entry.tracks += page.tracks.filter { !existing.contains($0.id) }
+                entry.toplistTotal = page.total
+            }
+        } catch {
+            updateRoute(token) { $0.error = error.localizedDescription }
+        }
+    }
+
+    /// How many tracks the open chart claims to have.
+    var toplistTotal: Int { routes.current?.toplistTotal ?? 0 }
+
+    /// Whether the open chart has more tracks to fetch. A chart is the only page that pages, so this
+    /// is false everywhere else — the earlier version keyed it off "a chart was opened at some
+    /// point", which appended chart tracks to whatever list was on screen next.
+    var canLoadMoreToplist: Bool {
+        guard case .toplist? = route else { return false }
+        return libraryTracks.count < toplistTotal
+    }
+
+    /// The album behind the open album page, once it is known.
+    var albumDetails: AlbumClassicalDetails? { routes.current?.albumDetails }
+
+    /// The profile of the open artist page.
+    var searchArtistDetail: Artist? {
+        guard case .artist? = route else { return nil }
+        return routes.current?.artist
+    }
+
+    var artistSongs: [Track] { routes.current?.artistSongs ?? [] }
+    var artistAlbums: [Album] { routes.current?.artistAlbums ?? [] }
+
+    /// The playlist behind the open playlist page, whichever kind it is.
+    var currentPlaylistName: String? {
+        switch route {
+        case .playlist(let playlist): return playlist.name
+        case .searchPlaylist(let playlist): return playlist.name
+        default: return nil
+        }
+    }
+
+    /// The album behind the open album page.
+    var currentAlbum: Album? {
+        if case .album(let album)? = route { return album }
+        return nil
+    }
+
+    /// Whether the open page is a playlist found by search — the one kind that offers "collect".
+    var currentSearchPlaylist: SearchPlaylist? {
+        if case .searchPlaylist(let playlist)? = route { return playlist }
+        return nil
+    }
+
+    private func loadSectionTracks(_ fetch: () async throws -> [Track]) async {
+        isLoadingLibrary = true
+        sectionError = nil
+        defer { isLoadingLibrary = false }
+        do {
+            sectionTracks = try await fetch()
+        } catch {
+            sectionTracks = []
+            sectionError = error.localizedDescription
+        }
+    }
+
+    private func load(route: Route, token: Int, _ fetch: () async throws -> [Track]) async {
+        isLoadingLibrary = true
+        defer { isLoadingLibrary = false }
+        do {
+            let tracks = try await fetch()
+            updateRoute(token) { entry in
+                entry.tracks = tracks
+                entry.error = nil
+            }
+        } catch {
+            updateRoute(token) { entry in
+                entry.tracks = []
+                entry.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// Album contents plus the credits that come with them, and the album's own description, which
+    /// replaces the id-and-name stub the row supplied.
+    private func loadAlbum(route: Route, album: Album, token: Int) async {
+        isLoadingLibrary = true
+        defer { isLoadingLibrary = false }
+        do {
+            let result = try await platform.albumTracks(album)
+            // The endpoint's own description replaces the id-and-name stub, so collecting from this
+            // page writes a complete album into the user's collection.
+            let resolved = Album(
+                id: album.id,
+                name: result.name ?? album.name,
+                artist: result.artist ?? album.artist,
+                trackCount: result.tracks.count,
+                artworkURL: album.artworkURL,
+                year: result.year ?? album.year
+            )
+            updateRoute(token) { entry in
+                entry.route = .album(resolved)
+                entry.tracks = result.tracks
+                entry.albumDetails = result.details
+                entry.error = nil
+            }
+        } catch {
+            updateRoute(token) { entry in
+                entry.tracks = []
+                entry.error = error.localizedDescription
+            }
         }
     }
 
@@ -604,42 +720,88 @@ final class AppModel: ObservableObject {
 
     /// Opens a playlist that came from search (it may belong to another user).
     func open(_ playlist: SearchPlaylist) async {
-        section = .search
-        pane = .list
-        selectedPlaylist = nil
-        selectedAlbum = nil
-        albumDetails = nil
-        searchPlaylistDetail = playlist
-        await loadTracks { try await platform.tracks(inSearchPlaylist: playlist) }
+        await push(.searchPlaylist(playlist)) { route, token in
+            await self.load(route: route, token: token) {
+                try await self.platform.tracks(inSearchPlaylist: playlist)
+            }
+        }
     }
 
     /// An artist's detail page: profile, top songs and albums.
+    ///
+    /// The three requests are awaited separately: a profile that fails must not also blank out the
+    /// song list that came back fine.
     func open(_ artist: Artist) async {
-        section = .search
-        pane = .list
-        selectedPlaylist = nil
-        selectedAlbum = nil
-        albumDetails = nil
-        searchPlaylistDetail = nil
-        searchArtistDetail = artist
-        artistTab = .songs
-        artistSongs = []
-        artistAlbums = []
-        libraryTracks = []
-        libraryError = nil
-        isLoadingLibrary = true
-        defer { isLoadingLibrary = false }
-        do {
-            async let detail = platform.artistDetail(artist)
-            async let songs = platform.songs(by: artist)
-            async let albums = platform.albums(by: artist)
-            searchArtistDetail = try await detail
-            artistSongs = try await songs
-            artistAlbums = try await albums
-            libraryTracks = artistSongs
-        } catch {
-            libraryError = error.localizedDescription
+        await push(.artist(artist)) { _, token in
+            self.artistTab = .songs
+            self.isLoadingLibrary = true
+            defer { self.isLoadingLibrary = false }
+            async let detail = self.platform.artistDetail(artist)
+            async let songs = self.platform.songs(by: artist)
+            async let albums = self.platform.albums(by: artist)
+            let profile = try? await detail
+            let songList = (try? await songs) ?? []
+            let albumList = (try? await albums) ?? []
+            self.updateRoute(token) { entry in
+                let resolved = profile ?? artist
+                // The row only knows a name; the detail endpoint's profile replaces it, so the page
+                // header (and the route itself) carries the real counts and artwork.
+                entry.route = .artist(resolved)
+                entry.artist = resolved
+                entry.artistSongs = songList
+                entry.artistAlbums = albumList
+                entry.tracks = songList
+                entry.error = songList.isEmpty && albumList.isEmpty
+                    ? "这个歌手的歌曲与专辑都没能取到"
+                    : nil
+            }
         }
+    }
+
+    /// Plays a row from the search results.
+    ///
+    /// Search results are a flat list of unrelated songs, so queuing "the rest of the list" means
+    /// queuing a random assortment. When the row knows its album, the album's own track order becomes
+    /// the queue and the current song keeps its real position in it. When it does not — no album id,
+    /// the album cannot be fetched, or the album does not contain this song — only this song is
+    /// queued, which is the honest answer rather than a queue the user did not ask for.
+    func playFromSearch(_ track: Track) async {
+        playGeneration += 1
+        let generation = playGeneration
+        selectedTrackID = track.id
+        guard let albumID = track.albumID else {
+            playSingleFromSearch(track, reason: "这首歌没有专辑信息，只播这一首")
+            return
+        }
+        let album = Album(
+            id: albumID, name: track.album, artist: track.artist,
+            trackCount: 0, artworkURL: track.artworkURL, year: nil
+        )
+        let albumTracks: [Track]
+        do {
+            albumTracks = try await platform.albumTracks(album).tracks
+        } catch {
+            guard generation == playGeneration else { return }
+            playSingleFromSearch(track, reason: "专辑曲目取不到，只播这一首")
+            return
+        }
+        // Double-clicking a second song while the first album was still loading must not be undone by
+        // the slower request finishing last.
+        guard generation == playGeneration else { return }
+        guard let index = albumTracks.firstIndex(where: { $0.id == track.id }) else {
+            playSingleFromSearch(track, reason: "专辑里没有找到这首歌，只播这一首")
+            return
+        }
+        player.play(tracks: albumTracks, startingAt: index)
+    }
+
+    /// Bumped by every search-result play, so a slow album lookup cannot replace a newer choice.
+    private var playGeneration = 0
+
+    private func playSingleFromSearch(_ track: Track, reason: String) {
+        selectedTrackID = track.id
+        player.play(tracks: [track], startingAt: 0)
+        player.showNotice(reason)
     }
 
     // MARK: - Writes
@@ -703,7 +865,9 @@ final class AppModel: ObservableObject {
     /// Collects a playlist found by search.
     func toggleSubscription(_ playlist: SearchPlaylist) async {
         writeError = nil
-        if playlists.contains(where: { $0.name == playlist.name }) {
+        // Match on id, not on name: two different playlists can share a title, and matching by name
+        // reported "already collected" for a playlist the user had never seen.
+        if playlists.contains(where: { $0.id == playlist.id }) {
             flash("这个歌单已经在收藏里")
             return
         }
@@ -721,37 +885,12 @@ final class AppModel: ObservableObject {
         albums.contains { $0.id == album.id }
     }
 
-    func openAlbum(_ album: Album) async {
-        section = .search
-        pane = .list
-        selectedPlaylist = nil
-        searchPlaylistDetail = nil
-        searchArtistDetail = nil
-        selectedAlbum = album
-        albumDetails = nil
-        await loadTracks {
-            let result = try await platform.albumTracks(album)
-            albumDetails = result.details
-            return result.tracks
-        }
-    }
-
-    func clearSearchDetail() {
-        selectedAlbum = nil
-        searchPlaylistDetail = nil
-        searchArtistDetail = nil
-        albumDetails = nil
-        artistSongs = []
-        artistAlbums = []
-        libraryTracks = []
-        libraryError = nil
-    }
-
+    /// Drops the detail pages and the search results behind them.
     func clearSearch() {
         query = ""
         searchResults = SearchResults()
         searchError = nil
-        clearSearchDetail()
+        clearRoutes()
     }
 
     /// Sections other than search are not implemented yet; the pane says so instead of pretending
@@ -775,7 +914,7 @@ final class AppModel: ObservableObject {
 
     // MARK: - Paths
 
-    private static func supportDirectory() -> URL {
+    nonisolated static func defaultSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = base.appendingPathComponent("bbMusic", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -783,7 +922,7 @@ final class AppModel: ObservableObject {
     }
 
     /// The sidecar ships inside the bundle; while developing, fall back to the repo checkout.
-    private static func sidecarDirectory() -> URL {
+    nonisolated static func defaultSidecarDirectory() -> URL {
         if let resources = Bundle.main.resourceURL?
             .appendingPathComponent("sidecar", isDirectory: true),
            FileManager.default.fileExists(atPath: resources.appendingPathComponent("wrapper.js").path) {

@@ -32,10 +32,33 @@ struct RootView: View {
                 .background(palette.accent.opacity(0.10))
                 .transition(.opacity)
             }
+            if let failure = model.writeError {
+                HStack(spacing: 7) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                    Text(failure)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        model.clearWriteError()
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.red.opacity(0.07))
+                .transition(.opacity)
+            }
             Divider()
             PlayerBarView(model: model, player: player)
         }
         .animation(.easeInOut(duration: 0.15), value: model.writeSuccess)
+        .animation(.easeInOut(duration: 0.15), value: model.writeError)
         .frame(minWidth: 820, minHeight: 500)
         .background(palette.content)
         .tint(palette.accent)
@@ -62,21 +85,39 @@ struct RootView: View {
             }
         } else if model.showQueue {
             QueuePane(model: model, player: player)
-        } else if model.section == .charts, model.selectedToplist == nil {
-            ChartsPane(model: model)
-        } else if model.section == .search, model.searchArtistDetail != nil {
-            ArtistDetailPane(model: model, player: player)
-        } else if model.section == .search, model.hasSearchDetail {
-            TracksPane(model: model, player: player, context: .searchDetail)
-        } else if model.section == .search {
-            // Search has its own pane with the query field. Without this branch it fell through to
-            // the library pane, which has no way to type a query at all.
-            SearchPane(model: model, player: player)
-        } else if model.section == .playlists && model.selectedPlaylist == nil {
-            PlaylistsPane(model: model)
-        } else if model.section == .albums && model.selectedAlbum == nil {
-            AlbumsPane(model: model)
+        } else if let route = model.route {
+            // Every detail page comes from the route stack, so what is on screen and where 返回 goes
+            // are the same fact. Picking the pane off separate `selected*` fields is what used to
+            // let one page's leftovers render inside another.
+            detailPane(route)
         } else {
+            sectionPane
+        }
+    }
+
+    @ViewBuilder
+    private func detailPane(_ route: Route) -> some View {
+        switch route {
+        case .artist:
+            ArtistDetailPane(model: model, player: player)
+        case .toplist, .playlist, .searchPlaylist, .album:
+            TracksPane(model: model, player: player)
+        }
+    }
+
+    /// The section's own page, shown when no detail page is open.
+    @ViewBuilder
+    private var sectionPane: some View {
+        switch model.section {
+        case .charts:
+            ChartsPane(model: model)
+        case .search:
+            SearchPane(model: model, player: player)
+        case .playlists:
+            PlaylistsPane(model: model)
+        case .albums:
+            AlbumsPane(model: model)
+        case .daily, .liked:
             TracksPane(model: model, player: player)
         }
     }
@@ -216,27 +257,6 @@ private struct SearchPane: View {
             Divider()
             if let notice = player.notice {
                 NoticeBar(text: notice)
-            }
-            if let writeError = model.writeError {
-                HStack(spacing: 7) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                    Text(writeError)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        model.clearWriteError()
-                    } label: {
-                        Image(systemName: "xmark").font(.system(size: 9))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.red.opacity(0.07))
             }
             if model.searchResults.isEmpty, model.isSearching {
                 // Only before the first page arrives; after that the list stays put and grows.
@@ -414,13 +434,20 @@ private struct SearchPane: View {
                 isLiked: model.isLiked,
                 onToggleLike: { track in Task { await model.toggleLike(track) } },
                 onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
-                onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
+                onOpenAlbum: { id, name, artist in
+                    Task { await model.openAlbum(id: id, name: name, artist: artist) }
+                },
+                // Search results are unrelated songs, so a play builds the queue out of the song's
+                // own album instead of the rest of the result list.
+                onPlay: { track in
+                    Task { await model.playFromSearch(track) }
+                }
             )
         case .album:
             CardGrid(items: model.filteredAlbums, onReachEnd: autoLoad) { album in
                 VStack(spacing: 4) {
                     Button {
-                        Task { await model.openAlbum(album) }
+                        Task { await model.open(album) }
                     } label: {
                         MediaCard(
                             title: album.name,
@@ -536,26 +563,15 @@ private struct SearchPane: View {
 // MARK: - Library panes
 
 private struct TracksPane: View {
-    enum Context { case library, searchDetail }
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
-    var context: Context = .library
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if context == .searchDetail {
+                if model.routes.canGoBack {
                     Button {
-                        model.clearSearchDetail()
-                    } label: {
-                        Label("返回搜索", systemImage: "chevron.left")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                } else if model.selectedPlaylist != nil || model.selectedAlbum != nil || model.selectedToplist != nil {
-                    Button {
-                        model.closeDetail()
+                        model.goBack()
                     } label: {
                         Label("返回", systemImage: "chevron.left")
                             .font(.system(size: 11))
@@ -571,14 +587,17 @@ private struct TracksPane: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let album = model.selectedAlbum {
+                if let album = model.currentAlbum {
                     Button(model.isCollected(album) ? "已收藏" : "点击收藏专辑") {
                         Task { await model.toggleSubscription(album) }
                     }
                     .controlSize(.small)
                     .disabled(model.isCollected(album))
                 }
-                if let playlist = model.searchPlaylistDetail {
+                // Only the page's own playlist can be collected from here: the button used to be
+                // driven by whatever playlist had been opened from search earlier, so it collected
+                // a playlist that was not on screen.
+                if let playlist = model.currentSearchPlaylist {
                     Button("点击收藏歌单") {
                         Task { await model.toggleSubscription(playlist) }
                     }
@@ -609,13 +628,17 @@ private struct TracksPane: View {
                     tracks: model.libraryTracks,
                     player: player,
                     selectedID: $model.selectedTrackID,
-                    showsDiscs: model.selectedAlbum != nil,
-                    showsAlbum: model.selectedPlaylist == nil && model.searchPlaylistDetail == nil,
+                    showsDiscs: model.currentAlbum != nil,
+                    // A playlist's rows would all repeat the same or an irrelevant album, so the
+                    // column is hidden there; album pages and search results show it.
+                    showsAlbum: model.currentPlaylistName == nil,
                     onReachEnd: model.canLoadMoreToplist ? { Task { await model.loadMoreToplistTracks() } } : nil,
                     isLiked: model.isLiked,
                     onToggleLike: { track in Task { await model.toggleLike(track) } },
                     onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
-                    onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
+                    onOpenAlbum: { id, name, artist in
+                        Task { await model.openAlbum(id: id, name: name, artist: artist) }
+                    }
                 )
                 if model.canLoadMoreToplist {
                     HStack(spacing: 6) {
@@ -636,24 +659,29 @@ private struct TracksPane: View {
         }
     }
 
+    /// The open page's own name, falling back to the section. Nothing from a page the user has
+    /// already left can leak in here: the title is read off the route that is on screen.
     private var title: String {
-        if let toplist = model.selectedToplist { return toplist.title }
-        if model.section == .daily { return "每日推荐" }
-        if let playlist = model.selectedPlaylist { return playlist.name }
-        if let playlist = model.searchPlaylistDetail { return playlist.name }
-        if let artist = model.searchArtistDetail { return artist.name }
-        if let album = model.selectedAlbum { return album.name }
-        return model.section.title
+        switch model.route {
+        case .toplist(let toplist): return toplist.title
+        case .playlist(let playlist): return playlist.name
+        case .searchPlaylist(let playlist): return playlist.name
+        case .album(let album): return album.name
+        case .artist(let artist): return artist.name
+        case nil:
+            if model.section == .daily { return "每日推荐" }
+            return model.section.title
+        }
     }
 
     private var emptyTitle: String {
-        if model.section == .daily { return "今天没有推荐" }
-        if context == .searchDetail { return "这里没有歌曲" }
+        if model.section == .daily, model.route == nil { return "今天没有推荐" }
+        if model.route != nil { return "这里没有歌曲" }
         return model.section == .liked ? "「我喜欢」里还没有歌曲" : "这里是空的"
     }
 
     private var emptyMessage: String {
-        if context == .searchDetail { return "这个专辑、歌单或歌手没有返回可播放的曲目。" }
+        if model.route != nil { return "这个专辑、歌单或歌手没有返回可播放的曲目。" }
         return model.section == .liked
             ? "在 QQ 音乐里点红心的歌曲会出现在这里。"
             : "换一个歌单看看，或者检查登录状态。"
@@ -694,7 +722,7 @@ private struct PlaylistsPane: View {
                             artworkURL: playlist.artworkURL,
                             placeholderSymbol: playlist.isLikedSongs ? "heart.fill" : "music.note.list",
                             side: 120,
-                            isSelected: model.selectedPlaylist?.id == playlist.id
+                            isSelected: model.route == .playlist(playlist)
                         )
                     }
                     .buttonStyle(.plain)
@@ -737,7 +765,7 @@ private struct AlbumsPane: View {
                             artworkURL: album.artworkURL,
                             placeholderSymbol: "square.stack",
                             side: 120,
-                            isSelected: model.selectedAlbum?.id == album.id
+                            isSelected: model.currentAlbum?.id == album.id
                         )
                     }
                     .buttonStyle(.plain)
@@ -818,7 +846,9 @@ private struct ArtistDetailPane: View {
                             isLiked: model.isLiked,
                             onToggleLike: { track in Task { await model.toggleLike(track) } },
                             onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
-                            onOpenAlbum: { id, name in Task { await model.openAlbum(id: id, name: name) } }
+                            onOpenAlbum: { id, name, artist in
+                                Task { await model.openAlbum(id: id, name: name, artist: artist) }
+                            }
                         )
                     }
                 case .albums:
@@ -827,7 +857,7 @@ private struct ArtistDetailPane: View {
                     } else {
                         CardGrid(items: model.artistAlbums) { album in
                             Button {
-                                Task { await model.openAlbum(album) }
+                                Task { await model.open(album) }
                             } label: {
                                 MediaCard(
                                     title: album.name,
@@ -849,9 +879,9 @@ private struct ArtistDetailPane: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Button {
-                    model.clearSearchDetail()
+                    model.goBack()
                 } label: {
-                    Label("返回搜索", systemImage: "chevron.left")
+                    Label("返回", systemImage: "chevron.left")
                         .font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
@@ -1032,7 +1062,10 @@ private struct TrackList: View {
     var isLiked: (Track) -> Bool = { _ in false }
     var onToggleLike: (Track) -> Void = { _ in }
     var onOpenArtist: (String, String) -> Void = { _, _ in }
-    var onOpenAlbum: (String, String) -> Void = { _, _ in }
+    var onOpenAlbum: (String, String, String) -> Void = { _, _, _ in }
+    /// What a double-click plays. Defaults to "this list, from this row"; the search pane supplies
+    /// its own, because a search result list is not an album or a playlist.
+    var onPlay: ((Track) -> Void)?
 
     var body: some View {
         ScrollView {
@@ -1065,7 +1098,11 @@ private struct TrackList: View {
                     .simultaneousGesture(
                         TapGesture(count: 2).onEnded {
                             selectedID = track.id
-                            player.play(tracks: tracks, startingAt: index)
+                            if let onPlay {
+                                onPlay(track)
+                            } else {
+                                player.play(tracks: tracks, startingAt: index)
+                            }
                         }
                     )
                     .onTapGesture {
@@ -1106,7 +1143,7 @@ private struct TrackRow: View {
     var isLiked: Bool = false
     var onToggleLike: () -> Void = {}
     var onOpenArtist: (String, String) -> Void = { _, _ in }
-    var onOpenAlbum: (String, String) -> Void = { _, _ in }
+    var onOpenAlbum: (String, String, String) -> Void = { _, _, _ in }
     @Environment(\.palette) private var palette
 
     var body: some View {
@@ -1159,7 +1196,7 @@ private struct TrackRow: View {
 
             if showsAlbum {
                 Button {
-                    if let id = track.albumID { onOpenAlbum(id, track.album) }
+                    if let id = track.albumID { onOpenAlbum(id, track.album, track.artist) }
                 } label: {
                     Text(track.album)
                         .font(.system(size: 11.5))

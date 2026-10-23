@@ -136,7 +136,7 @@ protocol MusicPlatform: AnyObject, Sendable {
     func albums() async throws -> [Album]
     /// Album contents. Separate from `tracks(in:)` because an album carries its own classical
     /// credits, which a playlist does not.
-    func albumTracks(_ album: Album) async throws -> (tracks: [Track], details: AlbumClassicalDetails?)
+    func albumTracks(_ album: Album) async throws -> AlbumContents
     /// Qualities that actually exist for this track, best first. Empty when the platform cannot say.
     func availableQualities(for track: Track) async throws -> [AvailableQuality]
     func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource
@@ -239,6 +239,17 @@ enum PlatformConnectionState: Equatable, Sendable {
         case .failed: return "连接失败"
         }
     }
+}
+
+/// Album contents: the tracks, the classical credits that come with them, and the album's own
+/// description. A caller holding only an id and a name (a row's album label) gets the rest here
+/// instead of guessing it.
+struct AlbumContents: Sendable {
+    var tracks: [Track]
+    var details: AlbumClassicalDetails?
+    var name: String?
+    var artist: String?
+    var year: Int?
 }
 
 /// Classical credits that come with an album rather than with each track.

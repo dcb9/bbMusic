@@ -193,6 +193,12 @@ final class Player: ObservableObject {
         currentTime = max(0, time)
     }
 
+    /// Shows a one-line message in the player bar without being a playback failure — used when a
+    /// queue could not be built the way the caller intended and a narrower one was used instead.
+    func showNotice(_ text: String) {
+        notice = text
+    }
+
     func stop() {
         loadTask?.cancel()
         loadGeneration += 1

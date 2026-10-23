@@ -85,7 +85,9 @@ struct LoginSheet: View {
         .onAppear { start() }
         .onDisappear {
             pollTask?.cancel()
-            if let challenge { Task { await model.platform.cancelQRLogin(challenge) } }
+            if let challenge, let qrLogin = model.qrLogin {
+                Task { await qrLogin.cancelQRLogin(challenge) }
+            }
         }
     }
 
@@ -123,7 +125,10 @@ struct LoginSheet: View {
 
         pollTask = Task {
             do {
-                let fresh = try await model.platform.beginQRLogin(channel: channel)
+                guard let qrLogin = model.qrLogin else {
+                    throw PlatformError("当前平台不支持扫码登录")
+                }
+                let fresh = try await qrLogin.beginQRLogin(channel: channel)
                 guard !Task.isCancelled else { return }
                 challenge = fresh
 
@@ -131,7 +136,7 @@ struct LoginSheet: View {
                 while !Task.isCancelled {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     guard !Task.isCancelled else { return }
-                    let state = try await model.platform.pollQRLogin(fresh)
+                    let state = try await qrLogin.pollQRLogin(fresh)
                     guard !Task.isCancelled else { return }
                     status = state
                     switch state {

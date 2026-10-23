@@ -1,0 +1,159 @@
+import XCTest
+@testable import bbMusic
+
+/// Navigation contracts: what the content area shows and where 返回 goes are the same fact, and no
+/// page can inherit another page's data.
+@MainActor
+final class NavigationTests: XCTestCase {
+    private var model: AppModel!
+    private var platform: StubPlatform!
+    private var support: URL!
+
+    override func setUp() async throws {
+        support = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bbMusicTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        platform = StubPlatform()
+        model = AppModel(platform: platform, supportDirectory: support, sidecarDirectory: support)
+        // Select a section without a sidecar: the section switch is what the stack hangs off.
+        await model.selectSection(.liked)
+    }
+
+    override func tearDown() async throws {
+        model = nil
+        platform = nil
+        try? FileManager.default.removeItem(at: support)
+    }
+
+    // MARK: - Opening a page never moves the sidebar
+
+    func testArtistFromLibraryKeepsSection() async {
+        platform.artistSongs = [Fixture.track("s1", artistID: "a1")]
+        await model.openArtist(id: "a1", name: "歌手")
+
+        XCTAssertEqual(model.section, .liked, "从「我喜欢」点歌手，侧边栏必须留在「我喜欢」")
+        XCTAssertEqual(model.route, .artist(Fixture.artist("a1")))
+    }
+
+    func testAlbumFromLibraryKeepsSection() async {
+        platform.albumTracks["al1"] = [Fixture.track("t1", albumID: "al1")]
+        await model.openAlbum(id: "al1", name: "专辑", artist: "歌手")
+
+        XCTAssertEqual(model.section, .liked)
+        XCTAssertEqual(model.currentAlbum?.id, "al1")
+    }
+
+    // MARK: - 返回 is layered and lands where the user came from
+
+    func testBackWalksTheStackOnePageAtATime() async {
+        platform.albumTracks["al1"] = [Fixture.track("t1", albumID: "al1")]
+        platform.artistSongs = [Fixture.track("s1", artistID: "a1")]
+
+        await model.openArtist(id: "a1", name: "歌手")
+        await model.openAlbum(id: "al1", name: "专辑", artist: "歌手")
+
+        XCTAssertEqual(model.currentAlbum?.id, "al1", "专辑页应在栈顶")
+
+        model.goBack()
+        XCTAssertEqual(model.searchArtistDetail?.id, "a1", "第一次返回应回到歌手页")
+        XCTAssertEqual(model.section, .liked)
+
+        model.goBack()
+        XCTAssertNil(model.route, "第二次返回应回到列表")
+        XCTAssertEqual(model.section, .liked)
+    }
+
+    func testBackOnTheBottomPageDoesNothing() async {
+        XCTAssertFalse(model.routes.canGoBack)
+        model.goBack()
+        XCTAssertEqual(model.section, .liked, "没有来路时返回不能把用户带到别处")
+        XCTAssertNil(model.route)
+    }
+
+    func testBackRestoresThePageBelowWithoutRefetching() async {
+        platform.playlistTracks["p1"] = [Fixture.track("p1t1"), Fixture.track("p1t2")]
+        platform.albumTracks["al1"] = [Fixture.track("al1t1")]
+
+        await model.open(Fixture.playlist("p1"))
+        await model.openAlbum(id: "al1", name: "专辑", artist: "歌手")
+        model.goBack()
+
+        XCTAssertEqual(model.libraryTracks.map(\.id), ["p1t1", "p1t2"], "返回应恢复歌单自己的曲目")
+    }
+
+    // MARK: - A page only ever describes itself
+
+    func testSectionSwitchDropsDetailPagesSoNoStaleDataSurvives() async {
+        platform.playlistTracks["search1"] = [Fixture.track("x")]
+        await model.open(Fixture.searchPlaylist("search1", name: "别人的歌单"))
+        XCTAssertEqual(model.currentSearchPlaylist?.id, "search1")
+
+        // Switching to the user's own playlists must not leave the search playlist's collect button
+        // (or its hidden album column) behind.
+        await model.selectSection(.playlists)
+        XCTAssertNil(model.currentSearchPlaylist)
+        XCTAssertNil(model.currentPlaylistName)
+        XCTAssertFalse(model.routes.canGoBack)
+    }
+
+    func testChartStateDoesNotLeakIntoOtherSections() async {
+        platform.toplistPages[0] = (tracks: (0..<20).map { Fixture.track("c\($0)") }, total: 100)
+        await model.selectSection(.charts)
+        await model.open(Fixture.toplist("t1"))
+        XCTAssertTrue(model.canLoadMoreToplist, "榜单本身应能继续翻页")
+
+        await model.selectSection(.liked)
+        XCTAssertFalse(model.canLoadMoreToplist, "换到「我喜欢」后不能再翻榜单页")
+        XCTAssertEqual(model.toplistTotal, 0)
+    }
+
+    func testTitleComesFromThePageOnScreen() async {
+        platform.playlistTracks["search1"] = []
+        platform.albumTracks["al1"] = []
+        await model.open(Fixture.searchPlaylist("search1", name: "别人的歌单"))
+        await model.openAlbum(id: "al1", name: "我的专辑", artist: "歌手")
+
+        // The album page is on top, so nothing about the playlist opened before it may show through.
+        XCTAssertEqual(model.currentAlbum?.name, "我的专辑")
+        XCTAssertNil(model.currentSearchPlaylist)
+        XCTAssertNil(model.currentPlaylistName)
+    }
+
+    // MARK: - An album opened from a row becomes a complete album
+
+    func testAlbumOpenedFromRowIsReplacedByTheEndpointsDescription() async {
+        platform.albumTracks["al1"] = [Fixture.track("t1", albumID: "al1"), Fixture.track("t2", albumID: "al1")]
+        platform.albumMetadata["al1"] = (name: "真实专辑名", artist: "真实歌手", year: 1999)
+
+        await model.openAlbum(id: "al1", name: "行内名字", artist: "行内歌手")
+
+        let album = model.currentAlbum
+        XCTAssertEqual(album?.name, "真实专辑名")
+        XCTAssertEqual(album?.artist, "真实歌手")
+        XCTAssertEqual(album?.trackCount, 2, "收藏进列表的专辑必须带真实曲目数")
+        XCTAssertEqual(album?.year, 1999)
+    }
+
+    // MARK: - A slow load lands on its own page
+
+    func testLateLoadForAPoppedPageIsDiscarded() async {
+        platform.playlistTracks["p1"] = [Fixture.track("p1t1")]
+        await model.open(Fixture.playlist("p1"))
+        model.goBack()
+
+        // Whatever was in flight for the popped page must not write into the section list.
+        XCTAssertTrue(model.libraryTracks.isEmpty)
+        XCTAssertNil(model.route)
+    }
+
+    // MARK: - The sidebar is a way home
+
+    func testSelectingTheSameSectionReturnsToItsTopPage() async {
+        platform.artistSongs = [Fixture.track("s1", artistID: "a1")]
+        await model.openArtist(id: "a1", name: "歌手")
+        XCTAssertNotNil(model.route)
+
+        await model.selectSection(.liked)
+        XCTAssertNil(model.route, "点侧边栏应回到这一栏的首页")
+    }
+}

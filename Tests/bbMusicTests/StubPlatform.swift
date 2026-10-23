@@ -1,0 +1,142 @@
+import Foundation
+@testable import bbMusic
+
+/// A stand-in platform: every call answers from a fixture and records what was asked for.
+///
+/// The app's navigation and queue rules are pure state machines over these answers, so testing them
+/// needs no sidecar, no account and no network.
+final class StubPlatform: MusicPlatform, @unchecked Sendable {
+    let id = "stub"
+    let displayName = "Stub"
+
+    struct Failure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    var connected = true
+
+    // Fixtures.
+    var sectionTracks: [Track] = []
+    var playlistTracks: [String: [Track]] = [:]
+    var albumTracks: [String: [Track]] = [:]
+    /// Album metadata the endpoint reports, keyed by album id.
+    var albumMetadata: [String: (name: String, artist: String, year: Int?)] = [:]
+    var failingAlbums: Set<String> = []
+    var artistSongs: [Track] = []
+    var artistAlbums: [Album] = []
+    var toplistPages: [Int: (tracks: [Track], total: Int)] = [:]
+
+    // Recorded calls.
+    private(set) var albumRequests: [String] = []
+
+    func connectionState() async -> PlatformConnectionState {
+        connected ? .connected(displayName: "Stub") : .disconnected
+    }
+
+    func signIn() async throws -> PlatformConnectionState { await connectionState() }
+    func signOut() async throws {}
+
+    func search(_ query: String) async throws -> [Track] { [] }
+    func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults {
+        SearchResults(kind: kind)
+    }
+
+    func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track] {
+        playlistTracks[playlist.id] ?? []
+    }
+
+    func songs(by artist: Artist) async throws -> [Track] { artistSongs }
+    /// The real endpoint fills in counts and artwork the row did not know; the stub does the same so
+    /// a test can tell a stub route from a resolved one.
+    func artistDetail(_ artist: Artist) async throws -> Artist {
+        Artist(
+            id: artist.id, name: artist.name, songCount: 5, albumCount: 2,
+            artworkURL: artist.artworkURL, bio: artist.bio
+        )
+    }
+    func albums(by artist: Artist) async throws -> [Album] { artistAlbums }
+    func dailySongs() async throws -> [Track] { sectionTracks }
+
+    func toplists() async throws -> [Toplist] { [] }
+
+    func toplistTracks(_ toplist: Toplist, offset: Int) async throws -> (tracks: [Track], total: Int) {
+        toplistPages[offset] ?? ([], 0)
+    }
+
+    func setLiked(_ liked: Bool, track: Track) async throws {}
+    func setSubscribed(_ subscribed: Bool, album: Album) async throws {}
+    func setSubscribed(_ subscribed: Bool, playlist: SearchPlaylist) async throws {}
+
+    func likedSongs() async throws -> [Track] { sectionTracks }
+    func playlists() async throws -> [Playlist] { [] }
+    func tracks(in playlist: Playlist) async throws -> [Track] {
+        playlistTracks[playlist.id] ?? []
+    }
+    func albums() async throws -> [Album] { [] }
+
+    func albumTracks(_ album: Album) async throws -> AlbumContents {
+        albumRequests.append(album.id)
+        if failingAlbums.contains(album.id) {
+            throw Failure(message: "专辑取不到")
+        }
+        let tracks = albumTracks[album.id] ?? []
+        let meta = albumMetadata[album.id]
+        return AlbumContents(
+            tracks: tracks,
+            details: nil,
+            name: meta?.name,
+            artist: meta?.artist,
+            year: meta?.year
+        )
+    }
+
+    func availableQualities(for track: Track) async throws -> [AvailableQuality] { [] }
+    func streamSource(for track: Track, quality: AudioQuality) async throws -> StreamSource {
+        .url(URL(string: "https://example.invalid/\(track.id).mp3")!)
+    }
+    func lyrics(for track: Track) async throws -> Lyrics { .empty }
+}
+
+/// Convenience builders so a test reads as the scenario, not as a struct literal.
+enum Fixture {
+    static func track(
+        _ id: String,
+        albumID: String? = nil,
+        artistID: String? = nil,
+        title: String? = nil,
+        album: String = "专辑"
+    ) -> Track {
+        Track(
+            id: id,
+            title: title ?? "曲目 \(id)",
+            artist: "歌手",
+            album: album,
+            duration: 200,
+            artworkURL: nil,
+            isPlayable: true,
+            artistID: artistID,
+            albumID: albumID
+        )
+    }
+
+    static func album(_ id: String, name: String = "专辑") -> Album {
+        Album(id: id, name: name, artist: "歌手", trackCount: 10, artworkURL: nil, year: 2000)
+    }
+
+    static func playlist(_ id: String, name: String = "歌单") -> Playlist {
+        Playlist(id: id, name: name, trackCount: 10)
+    }
+
+    static func searchPlaylist(_ id: String, name: String = "别人的歌单") -> SearchPlaylist {
+        SearchPlaylist(id: id, name: name, creator: "某人", trackCount: 10, artworkURL: nil, listenCount: 0)
+    }
+
+    static func artist(_ id: String, name: String = "歌手") -> Artist {
+        Artist(id: id, name: name, songCount: 5, albumCount: 2, artworkURL: nil)
+    }
+
+    static func toplist(_ id: String, title: String = "榜单", count: Int = 100) -> Toplist {
+        Toplist(id: id, title: title, intro: "", trackCount: count, updateTime: nil, artworkURL: nil, group: "地区榜")
+    }
+}

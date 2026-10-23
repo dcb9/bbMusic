@@ -539,7 +539,11 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
     ///
     /// The endpoint is `/getAlbumInfo?albummid=…` — the route's `:albummid?` segment is optional, so
     /// passing it as a path component returns `no albummid` instead of the album.
-    func albumTracks(_ album: Album) async throws -> (tracks: [Track], details: AlbumClassicalDetails?) {
+    ///
+    /// The album's own name, artist and year come back with the tracks: a row's album label only
+    /// carries an id and a name, and an album opened from there must not stay a half-empty stub that
+    /// then gets written into the user's collection.
+    func albumTracks(_ album: Album) async throws -> AlbumContents {
         let data = try await get("/getAlbumInfo", query: [.init(name: "albummid", value: album.id)])
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let response = root["response"] as? [String: Any],
@@ -548,7 +552,9 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             throw PlatformError("专辑信息响应异常")
         }
         let raw = (payload["list"] as? [[String: Any]]) ?? []
-        guard !raw.isEmpty else { return ([], nil) }
+        guard !raw.isEmpty else {
+            return AlbumContents(tracks: [], details: nil, name: nil, artist: nil, year: nil)
+        }
 
         // `classic_list` groups runs of tracks by composer/work and names the disc they start on.
         let classics = (payload["classic_list"] as? [[String: Any]]) ?? []
@@ -582,7 +588,26 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             work: credits.compactMap(\.work).first,
             discCount: Set(credits.compactMap(\.disc)).count
         )
-        return (tracks, details)
+        return AlbumContents(
+            tracks: tracks,
+            details: details,
+            name: (payload["name"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            artist: Self.albumArtist(from: payload),
+            year: (payload["aDate"] as? String).flatMap { raw in
+                Int(raw.prefix(4)).flatMap { $0 > 1000 ? $0 : nil }
+            }
+        )
+    }
+
+    /// The album's performing artist, which the album endpoint spells as either a list of singers or
+    /// a single `singername` string.
+    private static func albumArtist(from payload: [String: Any]) -> String? {
+        let singers = (payload["singername"] as? String)
+            ?? ((payload["singer"] as? [[String: Any]])?
+                .compactMap { $0["name"] as? String }
+                .joined(separator: " / "))
+        guard let singers, !singers.isEmpty else { return nil }
+        return singers
     }
 
     func albums() async throws -> [Album] {
@@ -627,9 +652,15 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         let singers = (item["singer"] as? [[String: Any]]) ?? []
         let artist = singers.compactMap { ($0["name"] as? String) ?? ($0["title"] as? String) }
             .joined(separator: " / ")
+        // Two shapes carry the same information. Search results nest it in `album`, while the album
+        // endpoint flattens it into `albummid` / `albumname` on the track itself — reading only the
+        // nested form left every track on an album page with no album id, which broke both the album
+        // column and the "queue this song's album" path.
         let albumDict = item["album"] as? [String: Any]
-        let album = (albumDict?["name"] as? String) ?? ""
-        let albumMid = albumDict?["mid"] as? String
+        let album = (albumDict?["name"] as? String)
+            ?? (item["albumname"] as? String)
+            ?? ""
+        let albumMid = (albumDict?["mid"] as? String) ?? (item["albummid"] as? String)
         let interval = (item["interval"] as? Double) ?? Double(item["interval"] as? Int ?? 0)
 
         var artwork: URL?
@@ -658,7 +689,7 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         }
 
         let artistID = singers.compactMap { $0["mid"] as? String }.first { !$0.isEmpty }
-        let albumID = (albumDict?["mid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let albumID = albumMid.flatMap { $0.isEmpty ? nil : $0 }
 
         return Track(
             id: mid,

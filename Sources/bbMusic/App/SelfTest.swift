@@ -18,9 +18,14 @@ struct SelfTest {
         var detail: String
     }
 
+    /// Headless runs play real audio through the user's speakers, so they are quiet by design: the
+    /// check is about whether playback advances, not about how it sounds.
+    static let headlessVolume: Double = 0.1
+
     @MainActor
     static func run(model: AppModel) async -> (report: String, ok: Bool) {
         var steps: [Step] = []
+        model.player.volume = headlessVolume
 
         // 1. Sidecar
         let sidecarOK = await waitUntil(timeout: 25) { model.sidecarState.port != nil }
@@ -107,7 +112,7 @@ struct SelfTest {
                 model.player.duration,
                 model.player.isPlaying ? "yes" : "no",
                 model.player.isPreview ? "yes" : "no"
-            ) + " notice=\(model.player.notice ?? "none")" + audioNote
+            ) + " notice=\(model.player.notice ?? "none") volume=\(Int(Self.headlessVolume * 100))%" + audioNote
         ))
 
         // 6b. Library reads (require a signed-in account).
@@ -148,7 +153,7 @@ struct SelfTest {
                     ok: !model.libraryTracks.isEmpty,
                     detail: "\(playlist.name): \(model.libraryTracks.count) tracks"
                 ))
-                model.closeDetail()
+                model.goBack()
             }
         }
 
@@ -182,7 +187,7 @@ struct SelfTest {
                     steps.append(Step(name: "album-play", ok: false, detail: error.localizedDescription))
                 }
             }
-            model.closeDetail()
+            model.goBack()
         }
 
         // 6c. Classical-friendly display derivation.
@@ -300,7 +305,6 @@ struct SelfTest {
             model.searchKind = .song
             await model.runSearch()
             let baseline = model.searchResults.songs.count
-            let totalBaseline = model.searchResults.totalAvailable
             await withTaskGroup(of: Void.self) { group in
                 for _ in 0..<3 {
                     group.addTask { @MainActor in await model.loadMoreResults() }
@@ -389,7 +393,76 @@ struct SelfTest {
                     ok: !model.artistSongs.isEmpty && !model.artistAlbums.isEmpty,
                     detail: "\(model.searchArtistDetail?.name ?? "?"): \(model.artistSongs.count) songs, \(model.artistAlbums.count) albums, bio \(model.searchArtistDetail?.bio?.isEmpty == false ? "yes" : "no")"
                 ))
-                model.clearSearchDetail()
+                model.clearRoutes()
+            }
+        }
+
+        // 6c5b. Navigation: a detail page opened from a list returns to that list, one layer at a time.
+        if model.connection.isConnected {
+            await model.selectSection(.liked)
+            let sectionBefore = model.section
+            let rows = model.libraryTracks
+            var detailFailures: [String] = []
+            if let row = rows.first(where: { $0.artistID != nil }) {
+                await model.openArtist(id: row.artistID!, name: row.artist)
+                if model.section != sectionBefore { detailFailures.append("侧边栏跟着跳到了 \(model.section.title)") }
+                if model.route == nil { detailFailures.append("歌手页没有打开") }
+                model.goBack()
+                if model.route != nil { detailFailures.append("返回后仍停在详情页") }
+                if model.section != sectionBefore { detailFailures.append("返回后侧边栏丢了原位置") }
+            }
+            if let row = rows.first(where: { $0.albumID != nil }) {
+                await model.openAlbum(id: row.albumID!, name: row.album, artist: row.artist)
+                let opened = model.currentAlbum
+                if opened == nil { detailFailures.append("专辑页没有打开") }
+                // The row only knows an id and a name; the page must end up with the real album.
+                if let opened, opened.trackCount == 0 { detailFailures.append("专辑页没拿到真实曲目数") }
+                model.goBack()
+                if model.route != nil { detailFailures.append("从专辑返回后仍停在详情页") }
+                if model.libraryTracks.count != rows.count { detailFailures.append("返回后原列表丢了") }
+            }
+            steps.append(Step(
+                name: "navigation",
+                ok: detailFailures.isEmpty,
+                detail: detailFailures.isEmpty
+                    ? "歌手/专辑详情逐层返回，侧边栏留在 \(sectionBefore.title)"
+                    : detailFailures.joined(separator: "; ")
+            ))
+        }
+
+        // 6c5c. Playing a search result queues that song's album, in album order, with the song at its
+        // own position. The queue is what the user hears next, so this is asserted, not assumed.
+        if model.connection.isConnected {
+            model.query = "稻香"
+            model.searchKind = .song
+            await model.runSearch()
+            if let song = model.results.first(where: { $0.albumID != nil }),
+               let songAlbumID = song.albumID {
+                await model.playFromSearch(song)
+                let queue = model.player.queue
+                let position = model.player.currentIndex
+                let albumIDs = Set(queue.compactMap(\.albumID))
+                let failures: [String] = [
+                    queue.count <= 1 ? "队列只有 \(queue.count) 首，没有按专辑入队" : nil,
+                    queue.contains(where: { $0.id == song.id }) ? nil : "当前歌不在队列里",
+                    position.map { queue.indices.contains($0) && queue[$0].id == song.id ? nil : "当前索引没有指向这首歌" }
+                        ?? "没有当前索引",
+                    albumIDs == [songAlbumID] ? nil : "队列混进了别的专辑：\(albumIDs.sorted())",
+                ].compactMap { $0 }
+                steps.append(Step(
+                    name: "search-queue",
+                    ok: failures.isEmpty,
+                    detail: failures.isEmpty
+                        ? "\(song.title.prefix(20)) → 专辑 \(queue.count) 首，当前第 \((position ?? 0) + 1) 首，队首 \(String(queue.first?.title.prefix(18) ?? "-"))"
+                        : failures.joined(separator: "; ")
+                ))
+                if model.player.isPlaying { model.player.togglePlayPause() }
+            } else {
+                steps.append(Step(
+                    name: "search-queue",
+                    ok: false,
+                    detail: "搜索结果里没有带专辑 id 的歌，无法验证按专辑入队"
+                ))
             }
         }
 
