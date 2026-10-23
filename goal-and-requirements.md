@@ -116,6 +116,8 @@ QQ 音乐官方 Mac 客户端把播放、推荐、直播、MV、社区、广告�
 
 值得记住的一点：**Folia 已经用同一个 API 包解决了 QQ 音乐接入**，所以本项目的价值不在「能不能连上 QQ 音乐」，而在原生、克制、以听歌与记录为中心的形态。这也是为什么架构上要把「平台适配器」和「播放器/队列/scrobble」分开——前者是别人已经做过的脏活，后者才是本项目的取舍所在。
 
+**曲库能力来自 [`@yakult-green-tea/qq-music-api`](https://github.com/yakult-green-tea/qq-music-api)**（MIT，v3.3.5），它自身基于 [Rain120/qq-music-api](https://github.com/Rain120/qq-music-api)。本项目不内联它的源码，只声明依赖并在构建时随包分发；它调用的是逆向接口，其不可用是既定风险，也是下面「依赖边界」那条的来源。完整致谢见 README。
+
 ## Technology
 
 | Aspect | Choice | Rationale |

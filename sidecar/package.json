@@ -2,7 +2,7 @@
   "name": "bbmusic-sidecar",
   "version": "0.1.0",
   "private": true,
-  "description": "Loopback-only QQ Music API sidecar for bbMusic",
+  "description": "Loopback-only QQ Music API sidecar for bbMusic, wrapping @yakult-green-tea/qq-music-api",
   "main": "wrapper.js",
   "license": "MIT",
   "dependencies": {

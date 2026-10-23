@@ -61,6 +61,8 @@ flowchart LR
 
 **sidecar** 只做一件事：把 QQ 音乐上游的逆向接口翻译成 HTTP JSON。它无界面、无用户状态，可以随时被杀掉重启。
 
+sidecar 的实质是 [`@yakult-green-tea/qq-music-api`](https://github.com/yakult-green-tea/qq-music-api)（MIT，锁 3.3.5）加一层 `wrapper.js`——QQ 音乐的全部接口知识都在那个包里，本项目只做回环绑定、会话持久化接线与端口上报（下面三条）。它自身基于 [Rain120/qq-music-api](https://github.com/Rain120/qq-music-api)，`ATTRIBUTION.md` 记录完整来源。许可要求保留版权声明，因此 npm 装的 `LICENSE` / `ATTRIBUTION.md` 随 `node_modules` 一起进 bundle，`build-app.sh` 不做裁剪。
+
 三个具体约定：
 
 1. **回环绑定 + 动态端口。** 上游包在导入时就 `app.listen(port)`，且不指定 host——即绑定所有网卡（实测为 `::`）。本项目用自带的 `wrapper.js` 作为 sidecar 入口：设 `NODE_ENV=test` 让上游跳过自己的 `listen()`（此时它导出的 `server` 为 `null`），再对默认导出的 Koa app 执行 `listen(0, '127.0.0.1')`，得到回环 + 系统分配的空闲端口，并向 stdout 打印一行 `BBMUSIC_PORT <n>`。主进程读这一行拿端口，因此不存在端口冲突，局域网也无法访问该服务。

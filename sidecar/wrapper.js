@@ -3,9 +3,14 @@
 
 // bbMusic sidecar.
 //
-// The upstream package (@yakult-green-tea/qq-music-api) listens on `app.listen(port)` with no
-// host argument, which binds every interface (`::`) on a fixed port. We only ever want this
-// service reachable from this Mac, on a port nobody else has claimed.
+// All QQ Music knowledge lives in the upstream package, `@yakult-green-tea/qq-music-api` (MIT),
+// which is itself based on Rain120/qq-music-api. This file adds only what a desktop host needs:
+// loopback binding, session-store wiring and a port handshake. Its LICENSE and ATTRIBUTION.md ship
+// inside node_modules and are not stripped by build-app.sh.
+//
+// The upstream listens on `app.listen(port)` with no host argument, which binds every interface
+// (`::`) on a fixed port. We only ever want this service reachable from this Mac, on a port nobody
+// else has claimed.
 //
 // `NODE_ENV=test` makes the upstream skip its own listen() (its exported `server` becomes null),
 // leaving the default-exported Koa app for us to bind ourselves. Keep this assignment above the

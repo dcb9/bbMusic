@@ -4,13 +4,21 @@
 
 macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 
-一个窗口、三个区域、没有广告位和直播入口。曲库来自自托管的 QQ 音乐 API，播放记录交给 Last.fm。
+一个窗口、三个区域、没有广告位和直播入口。曲库来自 QQ 音乐，**QQ 音乐享有所有内容的版权**；播放记录交给 Last.fm。
 
 界面跟随图标：深林绿的侧边栏 + 暖纸白的内容区，浅色与深色外观各一套。
 
 | 浅色 | 深色 |
 |---|---|
 | ![浅色](docs/screenshots/01-search.png) | ![深色](docs/screenshots/dark/01-search.png) |
+
+## 注意
+
+**本项目与腾讯或 QQ 音乐没有隶属、授权或合作关系。** 使用时请遵守平台条款和内容授权要求。
+
+**当前代码仅供学习，不可做商业用途。**
+
+如果官方认为侵权，发送 Email 至 `robertduu+AT+gmail+DOT+com` 即可关闭该仓库。
 
 ## 功能
 
@@ -91,7 +99,7 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 需要 macOS 14+、Xcode 命令行工具、Node 20+（仅构建时用来装依赖；运行时不依赖系统 Node）。
 
 ```sh
-# 1. 安装 sidecar 依赖（只需一次）
+# 1. 安装 sidecar 依赖（只需一次）——拉的是 @yakult-green-tea/qq-music-api
 cd sidecar && npm install && cd ..
 
 # 2. 组装 .app（内嵌 Node 运行时与 sidecar）
@@ -138,6 +146,16 @@ QQ 音乐匿名只能拿到 30 秒试听，完整播放需要登录。播放条�
 - **厂牌与指挥不做筛选**：QQ 音乐搜索响应没有这两个字段，用正则从描述里猜会给出不可靠的结果。
 - **下架曲目无法播放**：版权下架后上游会抹掉 `mid` 与 `album.mid`，这类歌单（例如「李志」）没有封面也播不了。
 - **ad-hoc 签名**：媒体键与部分系统集成未验证。
+
+## 致谢
+
+曲库能力全部来自这个包，没有它这个 App 不存在：
+
+**[`@yakult-green-tea/qq-music-api`](https://github.com/yakult-green-tea/qq-music-api)**（v3.3.5，MIT）——非官方的 QQ 音乐 API，扫码登录、个人音乐库、播放链接、歌词与音质都出自它。bbMusic 只是在它外面套了一层原生界面与播放器。
+
+它自身基于 **[Rain120/qq-music-api](https://github.com/Rain120/qq-music-api)**（原作者 [Rain120](https://github.com/Rain120)），当前由 yakult-green-tea 维护并发布到 npm；`chthollyphile`、`lantudou` 等贡献者的改动记录在该包的 `ATTRIBUTION.md` 里。
+
+许可与责任：这个包是 MIT，本仓库不内联它的源码，只在 `sidecar/package.json` 里声明依赖（锁在 3.3.5），构建时由 npm 装进 `Contents/Resources/sidecar/node_modules` 随包分发，它自己的 `LICENSE` 与 `ATTRIBUTION.md` 一并保留。它调用的是逆向出的 QQ 音乐接口，随时可能失效；使用范围与责任见开头的[注意](#注意)。
 
 ## 文档
 
