@@ -500,6 +500,24 @@ struct SelfTest {
             ))
         }
 
+        // 6c5e3. Queue persistence: the queue comes back on restart, paused, on the same row.
+        if model.connection.isConnected, !model.player.queue.isEmpty {
+            model.saveQueueNow()
+            let store = QueueStore(supportDirectory: model.supportDirectory)
+            let snapshot = store.load()
+            let restored = snapshot.map {
+                $0.tracks.map(\.id) == model.player.queue.map(\.id)
+                    && $0.currentIndex == model.player.currentIndex
+            } ?? false
+            steps.append(Step(
+                name: "queue-saved",
+                ok: restored,
+                detail: restored
+                    ? "已保存 \(snapshot!.tracks.count) 首，当前第 \((snapshot!.currentIndex ?? 0) + 1) 首，位置 \(Int(snapshot!.currentTime))s"
+                    : "队列快照异常"
+            ))
+        }
+
         // 6c5e4. Row actions: the detail button opens the page for that row **without playing it**, and
         // 返回 goes back to the list. Opening a song to read about it must not start it or replace the
         // queue — that was a bug, so it is asserted rather than assumed.

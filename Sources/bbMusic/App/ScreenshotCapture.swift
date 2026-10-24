@@ -154,6 +154,26 @@ enum ScreenshotCapture {
             await setMouseOverRow()
         }))
 
+        // 11c. A playlist page with the facts the API reports, and the collect button.
+        shots.append(("14-playlist-detail", {
+            model.clearRoutes()
+            model.section = .playlists
+            await model.selectSection(.playlists)
+            if let playlist = model.playlists.first(where: { !$0.isLikedSongs }) {
+                await model.open(playlist)
+            }
+        }))
+
+        // 11d. An album page with its full metadata.
+        shots.append(("15-album-detail", {
+            model.clearRoutes()
+            model.section = .albums
+            await model.selectSection(.albums)
+            if let album = model.albums.first {
+                await model.open(album)
+            }
+        }))
+
         // 12. The song's own page, reached from the player bar's left block. A multi-artist track is
         // preferred so the screenshot shows the credit split into separate, clickable names.
         shots.append(("12-track-detail", {
@@ -190,12 +210,27 @@ enum ScreenshotCapture {
 
     /// Parks the pointer over the third row so hover-only affordances are captured. A screenshot of
     /// a row without the pointer on it would simply not show them.
+    /// Hovers the ⓘ button of the third row so both the hover-only actions and the hover fill on one
+    /// of them are visible. The pointer is moved twice: the first move is what makes SwiftUI notice,
+    /// the second lands on the button so its own `onHover` fires.
     private static func setMouseOverRow() async {
         guard let window = await mainWindow() else { return }
-        let content = window.frame
-        let point = CGPoint(x: content.minX + 520, y: content.maxY - 210)
-        CGWarpMouseCursorPosition(point)
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        let frame = window.frame
+        let row = CGPoint(x: frame.minX + 560, y: frame.maxY - 118)
+        CGWarpMouseCursorPosition(row)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        let button = CGPoint(x: frame.minX + 1103, y: frame.maxY - 118)
+        CGWarpMouseCursorPosition(button)
+        // A synthetic move event is what SwiftUI's hover tracking reacts to when the pointer is
+        // already inside the window.
+        if let move = NSEvent.mouseEvent(
+            with: .mouseMoved, location: NSPoint(x: 1103, y: frame.height - 118),
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+        ) {
+            window.sendEvent(move)
+        }
+        try? await Task.sleep(nanoseconds: 800_000_000)
     }
 
     private static func setWindowSize(_ size: CGSize) async {

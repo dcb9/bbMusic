@@ -613,26 +613,32 @@ private struct TracksPane: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                // One button, both directions: an album that is in the collection says 取消收藏, and
+                // the playlist button only ever acts on the playlist this page is showing.
                 if let album = model.currentAlbum {
-                    Button(model.isCollected(album) ? "已收藏" : "点击收藏专辑") {
-                        Task { await model.toggleSubscription(album) }
+                    collectionButton(collected: model.isCollected(album)) {
+                        Task { await model.toggleCollected(album) }
                     }
-                    .controlSize(.small)
-                    .disabled(model.isCollected(album))
-                }
-                // Only the page's own playlist can be collected from here: the button used to be
-                // driven by whatever playlist had been opened from search earlier, so it collected
-                // a playlist that was not on screen.
-                if let playlist = model.currentSearchPlaylist {
-                    Button("点击收藏歌单") {
+                } else if let playlist = model.openPlaylist {
+                    collectionButton(collected: model.isCollected(playlist)) {
+                        Task { await model.toggleCollected(playlist) }
+                    }
+                } else if let playlist = model.currentSearchPlaylist {
+                    collectionButton(collected: model.isCollected(playlist)) {
                         Task { await model.toggleSubscription(playlist) }
                     }
-                    .controlSize(.small)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             Divider()
+
+            // What the platform says about this playlist or album: description, owner, counts. Shown
+            // above the tracks because it is what identifies the page, and dropped row by row when a
+            // field was not reported.
+            if !detailHeader.isEmpty {
+                detailHeaderView(detailHeader)
+            }
 
             if let notice = player.notice {
                 NoticeBar(text: notice)
@@ -691,6 +697,65 @@ private struct TracksPane: View {
                 }
             }
         }
+    }
+
+    private func collectionButton(collected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(collected ? "取消收藏" : "收藏")
+                .font(.system(size: 11))
+        }
+        .controlSize(.small)
+    }
+
+    /// The facts to show above the track list, if this page has any.
+    private var detailHeader: [DetailHeaderItem] {
+        var items: [DetailHeaderItem] = []
+        if let album = model.currentAlbum {
+            if let date = album.releaseDate { items.append(.init("发行", date)) }
+            if let company = album.company { items.append(.init("唱片公司", company)) }
+            if let genre = album.genre { items.append(.init("流派", genre)) }
+            if let language = album.language { items.append(.init("语种", language)) }
+            if let summary = album.summary { items.append(.init("简介", summary, isLong: true)) }
+        } else if let details = model.currentPlaylistDetails {
+            if let creator = details.creator { items.append(.init("创建者", creator)) }
+            if let count = details.trackCount { items.append(.init("曲目", "\(count) 首")) }
+            if let plays = details.playCount, plays > 0 { items.append(.init("播放", "\(plays) 次")) }
+            if let comments = details.commentCount, comments > 0 {
+                items.append(.init("评论", "\(comments) 条"))
+            }
+            if let created = details.createdAt {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                items.append(.init("创建于", formatter.string(from: created)))
+            }
+            if !details.tags.isEmpty {
+                items.append(.init("标签", details.tags.joined(separator: " · ")))
+            }
+            if let summary = details.summary { items.append(.init("简介", summary, isLong: true)) }
+        }
+        return items
+    }
+
+    private func detailHeaderView(_ items: [DetailHeaderItem]) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(items) { item in
+                HStack(alignment: .top, spacing: 10) {
+                    Text(item.label)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 56, alignment: .leading)
+                    Text(item.value)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(item.isLong ? 4 : 1)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.02))
     }
 
     /// The open page's own name, falling back to the section. Nothing from a page the user has
@@ -1294,21 +1359,15 @@ private struct TrackRow: View {
         .contentShape(Rectangle())
     }
 
+    /// A row action. The hover fill is what tells the user which of the three the pointer is on —
+    /// three 18pt icons in a row are otherwise indistinguishable targets.
     private func rowAction(
         _ symbol: String,
         help: String,
         tint: Color = .secondary,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11))
-                .foregroundStyle(tint)
-                .frame(width: 18, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+        RowActionButton(symbol: symbol, help: help, tint: tint, action: action)
     }
 
     private var rowBackground: Color {
@@ -1662,5 +1721,19 @@ private struct ServiceUnavailableView: View {
                 .controlSize(.small)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// One label/value pair in a detail page's header.
+private struct DetailHeaderItem: Identifiable {
+    let label: String
+    let value: String
+    var isLong: Bool
+    var id: String { label }
+
+    init(_ label: String, _ value: String, isLong: Bool = false) {
+        self.label = label
+        self.value = value
+        self.isLong = isLong
     }
 }

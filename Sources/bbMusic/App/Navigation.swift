@@ -29,6 +29,8 @@ struct RouteEntry: Equatable {
     var tracks: [Track] = []
     var error: String?
     var albumDetails: AlbumClassicalDetails?
+    /// Header facts for a playlist page: description, owner, counts.
+    var playlistDetails: PlaylistDetails?
     /// The refreshed artist profile for `.artist`, when the detail endpoint answered.
     var artist: Artist?
     var artistSongs: [Track] = []

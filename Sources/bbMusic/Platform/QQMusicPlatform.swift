@@ -181,6 +181,49 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
         return results
     }
 
+    /// Everything the platform knows about a playlist, from the same endpoint that serves its tracks.
+    ///
+    /// The legacy payload carries far more than a name: description, owner, tags, play and comment
+    /// counts, creation time. The page shows what came back and drops the rest.
+    func playlistDetails(_ playlist: Playlist) async throws -> PlaylistDetails {
+        try await playlistDetails(disstid: playlist.id, fallbackName: playlist.name)
+    }
+
+    func playlistDetails(_ playlist: SearchPlaylist) async throws -> PlaylistDetails {
+        try await playlistDetails(disstid: playlist.id, fallbackName: playlist.name)
+    }
+
+    private func playlistDetails(disstid: String, fallbackName: String) async throws -> PlaylistDetails {
+        let data = try await get("/getSongListDetail", query: [
+            .init(name: "disstid", value: disstid),
+            .init(name: "song_begin", value: "0"),
+            .init(name: "song_num", value: "1"),
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return PlaylistDetails(name: fallbackName)
+        }
+        let payload = (root["response"] as? [String: Any]) ?? root
+        guard let head = (payload["cdlist"] as? [[String: Any]])?.first else {
+            return PlaylistDetails(name: fallbackName)
+        }
+        var created: Date?
+        if let raw = head["ctime"] as? Int, raw > 0 {
+            created = Date(timeIntervalSince1970: TimeInterval(raw))
+        }
+        return PlaylistDetails(
+            name: Self.text(head["dissname"]) ?? fallbackName,
+            creator: Self.text(head["nickname"]) ?? Self.text(head["nick"]),
+            summary: Self.text(head["desc"]),
+            trackCount: (head["total_song_num"] as? Int) ?? (head["songnum"] as? Int),
+            playCount: head["visitnum"] as? Int,
+            commentCount: head["cmtnum"] as? Int,
+            createdAt: created,
+            tags: ((head["tags"] as? [[String: Any]]) ?? [])
+                .compactMap { Self.text($0["name"]) ?? Self.text($0["tag"]) },
+            artworkURL: Self.text(head["logo"]).flatMap(Self.secureImageURL)
+        )
+    }
+
     func tracks(inSearchPlaylist playlist: SearchPlaylist) async throws -> [Track] {
         let data = try await get("/getSongListDetail", query: [
             .init(name: "disstid", value: playlist.id),
@@ -576,7 +619,13 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
                 trackCount: count,
                 isLikedSongs: isLiked,
                 isCollected: isCollected,
-                artworkURL: cover.flatMap(Self.secureImageURL)
+                artworkURL: cover.flatMap(Self.secureImageURL),
+                creator: Self.text(entry["nickname"]) ?? Self.text(entry["nick"]),
+                summary: Self.text(entry["desc"]),
+                playCount: entry["visitnum"] as? Int,
+                createdAt: (entry["ctime"] as? Int).flatMap { raw -> Date? in
+                    raw > 0 ? Date(timeIntervalSince1970: TimeInterval(raw)) : nil
+                }
             )
         }
         // 我喜欢 first, then the user's own order.
@@ -652,15 +701,28 @@ final class QQMusicPlatform: MusicPlatform, @unchecked Sendable {
             work: credits.compactMap(\.work).first,
             discCount: Set(credits.compactMap(\.disc)).count
         )
+        let releaseDate = (payload["aDate"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return AlbumContents(
             tracks: tracks,
             details: details,
             name: (payload["name"] as? String).flatMap { $0.isEmpty ? nil : $0 },
             artist: Self.albumArtist(from: payload),
-            year: (payload["aDate"] as? String).flatMap { raw in
-                Int(raw.prefix(4)).flatMap { $0 > 1000 ? $0 : nil }
-            }
+            year: releaseDate.flatMap { Int($0.prefix(4)) }.flatMap { $0 > 1000 ? $0 : nil },
+            releaseDate: releaseDate,
+            company: Self.text(payload["company"]),
+            genre: Self.text(payload["genre"]),
+            language: Self.text(payload["lan"]),
+            summary: Self.text(payload["desc"]),
+            artistID: Self.text(payload["singermid"])
         )
+    }
+
+    /// A trimmed non-empty string, or nil. Every optional field the pages show goes through this, so a
+    /// blank string from the API becomes an absent row rather than an empty one.
+    private static func text(_ value: Any?) -> String? {
+        guard let raw = value as? String else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The album's performing artist, which the album endpoint spells as either a list of singers or

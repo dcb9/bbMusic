@@ -64,6 +64,9 @@ final class Player: ObservableObject {
     var onPlaybackFailure: ((String) -> Void)?
     /// Called on every progress tick, so the scrobbler can judge the play against Last.fm's rule.
     var onProgress: ((TimeInterval) -> Void)?
+    /// Called whenever the queue, the current track or the position changes enough to be worth
+    /// persisting. The app writes a snapshot from here; the player does not know about files.
+    var onStateChanged: (() -> Void)?
 
     // MARK: - Internals
 
@@ -100,6 +103,43 @@ final class Player: ObservableObject {
         queue = tracks
         currentIndex = index
         load(tracks[index])
+        onStateChanged?()
+    }
+
+    /// Puts a saved queue back without playing anything.
+    ///
+    /// Used at launch: the list and the row come back, the transport stays paused. Pressing play then
+    /// continues from the saved position, which is why the position is restored separately from the
+    /// stream — nothing is fetched until the user asks for sound.
+    func restore(queue saved: [Track], currentIndex index: Int?, at position: TimeInterval) {
+        guard !saved.isEmpty else { return }
+        loadTask?.cancel()
+        loadGeneration += 1
+        queue = saved
+        currentIndex = index.flatMap { saved.indices.contains($0) ? $0 : nil }
+            ?? (saved.isEmpty ? nil : 0)
+        isPlaying = false
+        isBuffering = false
+        notice = nil
+        lyrics = .empty
+        isPreview = false
+        availableQualities = []
+        deliveredQuality = nil
+        pendingSeek = max(0, position)
+        currentTime = max(0, position)
+        duration = currentTrack?.duration ?? 0
+        // The stream is deliberately not attached: nothing plays, and nothing is fetched, until the
+        // user presses play.
+        player.replaceCurrentItem(with: nil)
+        onStateChanged?()
+    }
+
+    /// Starts the restored queue where it was left, fetching the stream for the first time.
+    func playRestored() {
+        guard let track = currentTrack else { return }
+        let position = currentTime
+        load(track)
+        if position > 0 { pendingSeek = position }
     }
 
     func playNow(_ track: Track, in tracks: [Track]? = nil) {
@@ -138,12 +178,14 @@ final class Player: ObservableObject {
             // Keep pointing at the same track after indices shift.
             currentIndex = min(index, queue.count - 1)
         }
+        onStateChanged?()
     }
 
     func clearQueue() {
         stop()
         queue = []
         currentIndex = nil
+        onStateChanged?()
     }
 
     func togglePlayPause() {
@@ -348,6 +390,7 @@ final class Player: ObservableObject {
                     let value = CMTimeGetSeconds(item.duration)
                     if value.isFinite, value > 0 { self.duration = value }
                 }
+                self.onStateChanged?()
             }
         }
 

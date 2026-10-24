@@ -70,6 +70,14 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
         playlistTracks[playlist.id] ?? []
     }
 
+    var playlistFacts: [String: PlaylistDetails] = [:]
+    func playlistDetails(_ playlist: Playlist) async throws -> PlaylistDetails {
+        playlistFacts[playlist.id] ?? PlaylistDetails(name: playlist.name)
+    }
+    func playlistDetails(_ playlist: SearchPlaylist) async throws -> PlaylistDetails {
+        playlistFacts[playlist.id] ?? PlaylistDetails(name: playlist.name)
+    }
+
     func songs(by artist: Artist) async throws -> ArtistSongs {
         ArtistSongs(tracks: artistSongs, total: artistSongTotal ?? artistSongs.count)
     }

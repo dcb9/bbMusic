@@ -47,6 +47,17 @@ struct Playlist: Identifiable, Codable, Hashable, Sendable {
     var isCollected: Bool = false
     /// Cover artwork. May be absent; the UI then derives one from the first track that has any.
     var artworkURL: URL?
+    /// Owner's nickname, when the platform names one.
+    var creator: String?
+    /// Playlist description, when there is one.
+    var summary: String?
+    /// Total plays and comments, when reported.
+    var playCount: Int?
+    var commentCount: Int?
+    /// Creation time, when reported.
+    var createdAt: Date?
+    /// Tags the platform attached ("华语", "轻音乐"…).
+    var tags: [String] = []
 }
 
 /// A saved album.
@@ -58,6 +69,18 @@ struct Album: Identifiable, Codable, Hashable, Sendable {
     var artworkURL: URL?
     /// Publication year, when the API reports one.
     var year: Int?
+    /// Full release date, when the API reports one.
+    var releaseDate: String?
+    /// Record label.
+    var company: String?
+    /// Genre label ("Pop 流行").
+    var genre: String?
+    /// Language label ("国语").
+    var language: String?
+    /// Album blurb.
+    var summary: String?
+    /// Artist id, so the album page can link to the artist.
+    var artistID: String?
 }
 
 /// Parsed lyrics: timed lines, each optionally carrying a translation.
@@ -138,6 +161,10 @@ protocol MusicPlatform: AnyObject, Sendable {
     func playlists() async throws -> [Playlist]
     func tracks(in playlist: Playlist) async throws -> [Track]
     func albums() async throws -> [Album]
+    /// Everything the platform knows about a playlist, for its page header.
+    func playlistDetails(_ playlist: Playlist) async throws -> PlaylistDetails
+    /// Everything the platform knows about a playlist found by search.
+    func playlistDetails(_ playlist: SearchPlaylist) async throws -> PlaylistDetails
     /// Album contents. Separate from `tracks(in:)` because an album carries its own classical
     /// credits, which a playlist does not.
     func albumTracks(_ album: Album) async throws -> AlbumContents
@@ -258,6 +285,25 @@ struct AlbumContents: Sendable {
     var name: String?
     var artist: String?
     var year: Int?
+    var releaseDate: String?
+    var company: String?
+    var genre: String?
+    var language: String?
+    var summary: String?
+    var artistID: String?
+}
+
+/// Everything the platform says about one playlist, for the playlist page's header.
+struct PlaylistDetails: Sendable, Equatable {
+    var name: String?
+    var creator: String?
+    var summary: String?
+    var trackCount: Int?
+    var playCount: Int?
+    var commentCount: Int?
+    var createdAt: Date?
+    var tags: [String] = []
+    var artworkURL: URL?
 }
 
 /// Classical credits that come with an album rather than with each track.

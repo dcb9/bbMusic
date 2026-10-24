@@ -139,6 +139,8 @@ final class AppModel: ObservableObject {
     /// Where local state lives. Injected so tests never touch the real one.
     let supportDirectory: URL
     private lazy var appearanceStore = AppearanceStore(supportDirectory: supportDirectory)
+    private lazy var queueStore = QueueStore(supportDirectory: supportDirectory)
+    private var queueSaveTask: Task<Void, Never>?
     private let sidecar: SidecarManager
     private var connectionTask: Task<Void, Never>?
 
@@ -180,6 +182,11 @@ final class AppModel: ObservableObject {
         }
         player.onProgress = { [weak self] elapsed in
             self?.scrobbler.updateProgress(elapsed)
+        }
+        // Persist the queue so a restart reopens where the user left off. Debounced: the position
+        // ticks four times a second and every tick would otherwise write the whole queue.
+        player.onStateChanged = { [weak self] in
+            self?.scheduleQueueSave()
         }
 
         manager.onStateChange = { [weak self] state in
@@ -290,6 +297,46 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Queue persistence
+
+    /// Puts the saved queue back, paused, on the track that was playing.
+    private func restoreQueue() {
+        guard let snapshot = queueStore.load() else { return }
+        if let mode = Player.RepeatMode(rawValue: snapshot.repeatMode) {
+            player.repeatMode = mode
+        }
+        if snapshot.volume > 0 {
+            player.volume = snapshot.volume
+        }
+        player.restore(queue: snapshot.tracks, currentIndex: snapshot.currentIndex, at: snapshot.currentTime)
+        // Selecting the row makes the list show where playback will resume, without starting it.
+        selectedTrackID = player.currentTrack?.id
+    }
+
+    /// Debounced save: the position observer fires four times a second.
+    private func scheduleQueueSave() {
+        queueSaveTask?.cancel()
+        queueSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveQueueNow()
+        }
+    }
+
+    func saveQueueNow() {
+        guard !player.queue.isEmpty else {
+            queueStore.clear()
+            return
+        }
+        queueStore.save(QueueSnapshot(
+            tracks: player.queue,
+            currentIndex: player.currentIndex,
+            currentTime: player.currentTime,
+            repeatMode: player.repeatMode.rawValue,
+            volume: player.volume
+        ))
+    }
+
     /// Switches the app's appearance and remembers it. Applied through `NSApp.appearance`, which is
     /// what the window and every `NSHostingView` inside it inherit.
     ///
@@ -305,6 +352,7 @@ final class AppModel: ObservableObject {
         // Restore the saved appearance before anything is drawn, so the first frame is already in
         // the right palette instead of flashing the system's.
         setAppearance(appearanceStore.load())
+        restoreQueue()
         // Credentials come from the local file only. The application identity is never compiled in:
         // the shared secret is enough to sign requests as this application, so it must not be
         // readable from the source tree or from `strings` on the binary.
@@ -317,6 +365,9 @@ final class AppModel: ObservableObject {
 
     func shutdown() {
         connectionTask?.cancel()
+        // Save before stopping: `stop()` resets the position, and the snapshot is what makes the next
+        // launch reopen on the same row.
+        saveQueueNow()
         player.stop()
         scrobbler.trackStopped()
         mcp.stop()
@@ -454,9 +505,12 @@ final class AppModel: ObservableObject {
 
     func open(_ playlist: Playlist) async {
         await push(.playlist(playlist)) { route, token in
+            async let facts = self.platform.playlistDetails(playlist)
             await self.load(route: route, token: token) {
                 try await self.platform.tracks(in: playlist)
             }
+            let details = try? await facts
+            self.updateRoute(token) { $0.playlistDetails = details }
         }
     }
 
@@ -561,6 +615,20 @@ final class AppModel: ObservableObject {
         return nil
     }
 
+    /// The user's own playlist behind the open page, if that is what is open.
+    var openPlaylist: Playlist? {
+        if case .playlist(let playlist)? = route { return playlist }
+        return nil
+    }
+
+    /// Header facts for the open playlist page.
+    var currentPlaylistDetails: PlaylistDetails? {
+        switch route {
+        case .playlist, .searchPlaylist: return routes.current?.playlistDetails
+        default: return nil
+        }
+    }
+
     /// The album behind the open album page, once it is known.
     var albumDetails: AlbumClassicalDetails? { routes.current?.albumDetails }
 
@@ -638,7 +706,13 @@ final class AppModel: ObservableObject {
                 artist: result.artist ?? album.artist,
                 trackCount: result.tracks.count,
                 artworkURL: album.artworkURL,
-                year: result.year ?? album.year
+                year: result.year ?? album.year,
+                releaseDate: result.releaseDate ?? album.releaseDate,
+                company: result.company ?? album.company,
+                genre: result.genre ?? album.genre,
+                language: result.language ?? album.language,
+                summary: result.summary ?? album.summary,
+                artistID: result.artistID ?? album.artistID
             )
             updateRoute(token) { entry in
                 entry.route = .album(resolved)
@@ -871,9 +945,12 @@ final class AppModel: ObservableObject {
     /// Opens a playlist that came from search (it may belong to another user).
     func open(_ playlist: SearchPlaylist) async {
         await push(.searchPlaylist(playlist)) { route, token in
+            async let facts = self.platform.playlistDetails(playlist)
             await self.load(route: route, token: token) {
                 try await self.platform.tracks(inSearchPlaylist: playlist)
             }
+            let details = try? await facts
+            self.updateRoute(token) { $0.playlistDetails = details }
         }
     }
 
@@ -1111,6 +1188,37 @@ final class AppModel: ObservableObject {
     /// Whether an album is already in the user's collection.
     func isCollected(_ album: Album) -> Bool {
         albums.contains { $0.id == album.id }
+    }
+
+    /// Whether a playlist is in the user's collection. Matched by id: names repeat.
+    func isCollected(_ playlist: Playlist) -> Bool {
+        playlists.contains { $0.id == playlist.id && !$0.isLikedSongs }
+    }
+
+    /// Whether a playlist found by search is already in the user's collection.
+    func isCollected(_ playlist: SearchPlaylist) -> Bool {
+        playlists.contains { $0.id == playlist.id }
+    }
+
+    /// Collects or removes a playlist, from the playlist page's own button.
+    func toggleCollected(_ playlist: Playlist) async {
+        if isCollected(playlist) {
+            await uncollect(playlist)
+        } else {
+            await toggleSubscription(SearchPlaylist(
+                id: playlist.id, name: playlist.name, creator: playlist.creator ?? "",
+                trackCount: playlist.trackCount, artworkURL: playlist.artworkURL, listenCount: 0
+            ))
+        }
+    }
+
+    /// Collects or removes an album, from the album page's own button.
+    func toggleCollected(_ album: Album) async {
+        if isCollected(album) {
+            await uncollect(album)
+        } else {
+            await toggleSubscription(album)
+        }
     }
 
     /// Leaves the song detail page, dropping the song it was describing so the next visit starts from
