@@ -182,8 +182,11 @@ final class SidecarManager {
            existing.count >= 32 {
             return existing.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        // `SystemRandomNumberGenerator` is the standard library's cryptographically secure source —
+        // it draws from the same kernel pool `SecRandomCopyBytes` does, without pulling in Security
+        // (which the app no longer uses for anything, including the keychain).
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: 0...255, using: &generator) }
         let secret = bytes.map { String(format: "%02x", $0) }.joined()
         try? secret.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -203,5 +206,3 @@ final class SidecarManager {
         return URL(fileURLWithPath: "/usr/bin/env")
     }
 }
-
-import Security

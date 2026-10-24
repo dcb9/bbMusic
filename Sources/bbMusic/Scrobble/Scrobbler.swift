@@ -48,7 +48,7 @@ final class Scrobbler: ObservableObject {
     private var pending: [ScrobbleRecord] = []
     private var inFlight = false
     private let storeURL: URL
-    /// Credentials live in a local file, not the Keychain — see `LastFMCredentialsStore`.
+    /// Credentials live in a local file — see `LastFMCredentialsStore`.
     private let credentialsURL: URL
 
     // MARK: - Current play tracking
@@ -67,10 +67,11 @@ final class Scrobbler: ObservableObject {
 
     // MARK: - Setup
 
-    /// Reads the application identity and session from the Keychain and decides the initial state.
+    /// Reads the application identity and session from the credentials file and decides the initial
+    /// state.
     ///
-    /// Nothing is seeded from source on purpose — see `Keychain` for why the shared secret must not
-    /// live in the repository.
+    /// Nothing is seeded from source on purpose: the shared secret is enough to sign requests as this
+    /// application, so it must not live in the repository.
     func bootstrap() {
         guard let credentials = LastFMCredentialsStore.load(from: credentialsURL) else {
             connection = .noCredentials

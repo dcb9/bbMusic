@@ -194,8 +194,9 @@ final class AppModel: ObservableObject {
            existing.count >= 32 {
             return existing
         }
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        // Standard library CSPRNG; see `SidecarManager.sessionSecret` for why not `SecRandomCopyBytes`.
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: 0...255, using: &generator) }
         let token = bytes.map { String(format: "%02x", $0) }.joined()
         try? token.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -279,7 +280,7 @@ final class AppModel: ObservableObject {
         // Restore the saved appearance before anything is drawn, so the first frame is already in
         // the right palette instead of flashing the system's.
         setAppearance(appearanceStore.load())
-        // Credentials come from the Keychain only. The application identity is never compiled in:
+        // Credentials come from the local file only. The application identity is never compiled in:
         // the shared secret is enough to sign requests as this application, so it must not be
         // readable from the source tree or from `strings` on the binary.
         scrobbler.bootstrap()

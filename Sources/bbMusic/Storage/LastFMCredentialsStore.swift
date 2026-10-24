@@ -2,11 +2,12 @@ import Foundation
 
 /// Last.fm credentials, stored in a plain JSON file under Application Support.
 ///
-/// A file rather than the Keychain on purpose: this is a single-user tool on the owner's own Mac,
-/// and re-authorizing on every launch is worse than the (local, 0600) exposure. The file never
-/// leaves this machine and is never committed — `Scripts/seed-lastfm.sh` writes it.
+/// This is the only place they live. The app touches no keychain at all: no `SecItem*` calls, no
+/// access prompts, nothing to unlock. The file is owner-only (0600), never leaves this machine and is
+/// never committed — `Scripts/seed-lastfm.sh` writes it.
 ///
-/// The previous Keychain entries are migrated on first read so an existing setup keeps working.
+/// Nothing is migrated from anywhere: an older build kept these in the keychain, and that code path
+/// was removed along with the keychain access itself.
 enum LastFMCredentialsStore {
     struct Payload: Codable, Sendable {
         var apiKey: String
@@ -33,10 +34,7 @@ enum LastFMCredentialsStore {
                 username: payload.username
             )
         }
-        // One-time migration from the Keychain-based storage.
-        guard let legacy = Keychain.loadLastFMCredentials() else { return nil }
-        save(legacy, to: url)
-        return legacy
+        return nil
     }
 
     static func save(_ credentials: LastFMClient.Credentials, to url: URL) {

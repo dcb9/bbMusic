@@ -30,7 +30,7 @@ flowchart LR
     QQ["QQMusicPlatform<br/>适配器"]
     SC["Scrobble<br/>Last.fm 客户端 + 待提交队列 + 规则引擎"]
     LY["Lyrics<br/>LRC 解析 + 高亮"]
-    ST["Storage<br/>Keychain + JSON 状态"]
+    ST["Storage<br/>本地文件 + JSON 状态"]
   end
 
   subgraph Side["Node sidecar（子进程）"]
@@ -83,7 +83,7 @@ sidecar 的实质是 [`@yakult-green-tea/qq-music-api`](https://github.com/yakul
 | `QQMusicPlatform` | 把 QQ 音乐响应映射为统一模型；扫码登录流程；红心写回；取流地址 | 不决定「播放什么」，只回答「怎么拿到它」 |
 | `Scrobble` | Last.fm 授权、now-playing、播放判定（官方规则）、待提交队列持久化 | 不控制播放，只观察播放进度 |
 | `Lyrics` | LRC 解析（含翻译行）、按时间定位当前行 | 不拉取歌词，由 `Platform` 提供 |
-| `Storage` | Keychain 封装（Last.fm API key / secret / session）、应用状态文件、目录约定 | 不含业务判断 |
+| `Storage` | 本地凭据文件（Last.fm API key / secret / session）、应用状态文件、目录约定 | 不含业务判断；**不访问钥匙串** |
 
 **依赖方向**：`UI → Playback / Platform / Lyrics`，`Playback → Platform`（只为取流地址），`Scrobble → Storage`。没有任何模块反向依赖 `UI`。`QQMusicPlatform` 是唯一知道 QQ 音乐存在的地方——换成 Spotify 时它整体替换，其余模块不变。
 
@@ -120,7 +120,9 @@ sidecar 的实质是 [`@yakult-green-tea/qq-music-api`](https://github.com/yakul
 
 **签名**是 `md5(按 key 排序拼接 key+value + shared secret)`，`api_sig` 与 `format` 不参与。批量 scrobble 用数组下标（`artist[0]`…），参数名按 ASCII 排序，因此 `artist[10]` 排在 `artist[2]` 之前。
 
-**凭证**存 Keychain（API key、shared secret、session key、用户名）。源码只带占位常量，首次使用时写入——shared secret 足以冒充本应用签名，不能进 git，也不该以可被 `strings` 读出的形式留在二进制里。
+**凭证只存本地文件** `lastfm.json`（0600，API key、shared secret、session key、用户名），由 `Scripts/seed-lastfm.sh` 写入。源码不含 secret：它足以冒充本应用签名，不能进 git。
+
+**App 完全不碰钥匙串。** 没有 `SecItem*` 调用，没有授权弹窗，也没有需要解锁的条目——`import Security` 也已从代码里消失（连随机数都改用标准库的 `SystemRandomNumberGenerator`，它是同一份内核随机源）。早先的版本把 Last.fm 凭据放在钥匙串里，那条迁移路径随钥匙串访问一起删掉了；升级后若 `lastfm.json` 缺失，重跑一次 `seed-lastfm.sh` 即可。
 
 **判定规则**（Last.fm 官方）：曲目 > 30 秒，且播放满 `min(时长/2, 240s)`；时间戳取**开播时刻**。一条播放只记一次。
 

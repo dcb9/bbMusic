@@ -1,9 +1,9 @@
 #!/bin/bash
 # Writes the Last.fm application identity to a local file (0600) under Application Support.
 #
-# Credentials live in a file rather than the Keychain on purpose: this is a single-user tool on the
-# owner's own Mac, and re-authorizing every launch is worse than the local exposure. The file never
-# leaves this machine and is never committed — .gitignore excludes it.
+# Credentials live in this file and nowhere else: the app reads no keychain at all, so there is no
+# second copy to keep in sync. The file never leaves this machine and is never committed —
+# .gitignore excludes it.
 #
 #   ./Scripts/seed-lastfm.sh
 #   LASTFM_API_KEY=... LASTFM_SECRET=... ./Scripts/seed-lastfm.sh

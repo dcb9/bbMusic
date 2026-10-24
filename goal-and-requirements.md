@@ -105,7 +105,7 @@ QQ 音乐官方 Mac 客户端把播放、推荐、直播、MV、社区、广告�
 
 - **可恢复性**：API 服务进程崩溃或退出后，App 能自动重启它并保留登录态；App 重启后队列与 Last.fm 待提交记录不丢失。
 - **失败可见**：拿不到播放链接（无版权/会员/地区限制）时给出明确、可读的提示，而不是静默失败或空播放器。
-- **隐私**：QQ 音乐会话凭证与 Last.fm 密钥只存本机（Last.fm 的 API key / secret / session 全在 Keychain，源码不含 secret），不写入日志、不随崩溃报告外传；API 服务只监听 `127.0.0.1`。
+- **隐私**：QQ 音乐会话凭证与 Last.fm 密钥只存本机文件（0600，源码不含 secret），不写入日志、不随崩溃报告外传；**App 不读写系统钥匙串**，因此不会出现授权弹窗；API 服务只监听 `127.0.0.1`。
 - **依赖边界**：QQ 音乐接口为第三方逆向实现，其不可用是既定风险——平台适配器必须能整体替换，不影响播放器、队列与 scrobble 的其余部分。
 
 ## Alternatives Considered
@@ -128,7 +128,7 @@ QQ 音乐官方 Mac 客户端把播放、推荐、直播、MV、社区、广告�
 
 | Aspect | Choice | Rationale |
 | --- | --- | --- |
-| 应用层 | SwiftUI，macOS 原生，标准窗口 | 用户指定；系统媒体键、Now Playing、Keychain、窗口管理都无需自造 |
+| 应用层 | SwiftUI，macOS 原生，标准窗口 | 用户指定；系统媒体键、Now Playing、窗口管理都无需自造 |
 | 曲库接入 | 应用内嵌 Node 运行时 + [`@yakult-green-tea/qq-music-api`](https://github.com/yakult-green-tea/qq-music-api)，仅监听 `127.0.0.1` | 该 API 是 Koa2 + TypeScript 服务，提供扫码登录、会话管理、播放链接与歌单/推荐全套接口；内嵌后用户零配置 |
 | 平台适配 | 每个平台一个适配器：把平台响应映射为统一的 `Track` / `Playlist` / `Lyrics` 模型，并提供搜索、歌单、推荐、歌词、红心、取流地址六类调用 | 曲库来源可整体替换；界面只认统一模型，新增平台不动播放器、队列与 scrobble |
 | 播放内核 | `AVPlayer`（`AVQueuePlayer` 不适合任意跳转，队列由应用自己管理） | 原生、支持 HLS/流式、与系统 Now Playing 集成良好 |

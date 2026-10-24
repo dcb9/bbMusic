@@ -68,7 +68,7 @@ struct LastFMPanel: View {
                         .foregroundStyle(.tertiary)
                     Text("没有可用的 API 凭据")
                         .font(.system(size: 12.5, weight: .semibold))
-                    Text("需要在 Keychain 里写入 Last.fm API key 与 shared secret。")
+                    Text("缺少 lastfm.json。运行 Scripts/seed-lastfm.sh 写入 API key 与 shared secret。")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
