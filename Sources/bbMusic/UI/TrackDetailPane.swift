@@ -48,6 +48,21 @@ struct TrackDetailPane: View {
             if let track {
                 // Chips rather than system buttons: the rest of the window is drawn from the palette,
                 // and a grey AppKit capsule in the header is the one thing that would not belong.
+                //
+                // Play sits first and reads as the page's primary action. It does what the row's ▶
+                // does on the list this page was opened from — not "restart this song alone", which
+                // would throw away the album the user was listening through.
+                headerChip(
+                    isCurrentAndPlaying(track) ? "暂停" : "播放",
+                    emphasised: true,
+                    symbol: isCurrentAndPlaying(track) ? "pause.fill" : "play.fill"
+                ) {
+                    if isCurrentAndPlaying(track) {
+                        player.togglePlayPause()
+                    } else {
+                        Task { await model.playFromDetailPage(track) }
+                    }
+                }
                 headerChip(
                     model.isLiked(track) ? "已喜欢" : "加入我喜欢",
                     emphasised: model.isLiked(track)
@@ -61,22 +76,35 @@ struct TrackDetailPane: View {
         .padding(.vertical, 9)
     }
 
+    /// True when this song is the one playing and the transport is running, so the header offers 暂停
+    /// rather than a 播放 that would look like it does nothing.
+    private func isCurrentAndPlaying(_ track: Track) -> Bool {
+        player.currentTrack?.id == track.id && player.isPlaying
+    }
+
     private func headerChip(
         _ title: String,
         emphasised: Bool = false,
+        symbol: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: emphasised ? .medium : .regular))
-                .foregroundStyle(emphasised ? palette.accent : Color.secondary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(emphasised ? palette.accent.opacity(0.14) : palette.chip)
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 9.5))
+                }
+                Text(title)
+                    .font(.system(size: 11, weight: emphasised ? .medium : .regular))
+            }
+            .foregroundStyle(emphasised ? palette.accent : Color.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(emphasised ? palette.accent.opacity(0.14) : palette.chip)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -207,10 +235,8 @@ struct TrackDetailPane: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("搜索歌手 \(name)")
-        .onHover { inside in
-            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
+        .hoverFeedback("搜索歌手 \(name)")
+        .hoverCursor()
     }
 
     /// The album name as a link. Absent when the track carries no album id — a row with a dead link
@@ -229,10 +255,8 @@ struct TrackDetailPane: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("打开专辑 \(track.album)")
-            .onHover { inside in
-                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
+            .hoverFeedback("打开专辑 \(track.album)")
+            .hoverCursor()
         } else {
             Text(track.album)
                 .font(font)

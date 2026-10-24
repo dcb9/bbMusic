@@ -136,6 +136,12 @@ enum ScreenshotCapture {
             if let first = model.results.first {
                 await model.playFromSearch(first)
             }
+            // The state that used to be misleading: the row that was clicked stays selected while a
+            // later row plays. Selecting the queue's first track makes both states true at once, so the
+            // shot can show that the playing row — not the selected one — is the highlighted one.
+            model.player.next()
+            model.player.next()
+            model.selectedTrackID = model.player.queue.first?.id
             model.showQueue = true
         }))
 
@@ -145,13 +151,22 @@ enum ScreenshotCapture {
             model.pane = .lyrics
         }))
 
-        // 11b. A row with its hover actions visible: play, detail and the heart.
+        // 11a. A row with its hover actions visible: play, detail and the heart.
         shots.append(("13-row-actions", {
             model.clearRoutes()
             model.section = .daily
             await model.selectSection(.daily)
             model.selectedTrackID = model.libraryTracks.dropFirst(2).first?.id
             await setMouseOverRow()
+        }))
+
+        // 11b. The player bar's hover feedback: a wash on the control under the pointer and, after
+        // the delay, its name in a bubble. Only visible with the pointer parked on a button, so it
+        // cannot be captured by rendering a page alone.
+        shots.append(("16-player-bar-hover", {
+            model.clearRoutes()
+            model.section = .search
+            await setMouseOverQueueButton()
         }))
 
         // 11c. A playlist page with the facts the API reports, and the collect button.
@@ -164,7 +179,17 @@ enum ScreenshotCapture {
             }
         }))
 
-        // 11d. An album page with its full metadata.
+        // 11d. The same page's own play button, under the blurb.
+        shots.append(("17-playlist-play", {
+            model.clearRoutes()
+            model.section = .playlists
+            await model.selectSection(.playlists)
+            if let playlist = model.playlists.first(where: { !$0.isLikedSongs }) {
+                await model.open(playlist)
+            }
+        }))
+
+        // 11e. An album page with its full metadata.
         shots.append(("15-album-detail", {
             model.clearRoutes()
             model.section = .albums
@@ -208,29 +233,69 @@ enum ScreenshotCapture {
         return failures == 0 ? 0 : 1
     }
 
-    /// Parks the pointer over the third row so hover-only affordances are captured. A screenshot of
-    /// a row without the pointer on it would simply not show them.
-    /// Hovers the ⓘ button of the third row so both the hover-only actions and the hover fill on one
-    /// of them are visible. The pointer is moved twice: the first move is what makes SwiftUI notice,
-    /// the second lands on the button so its own `onHover` fires.
-    private static func setMouseOverRow() async {
+    /// Parks the pointer on the ⓘ button of a row so the hover-only actions, the wash on the one under
+    /// the pointer, and its label are all captured. A row without the pointer on it would show none.
+    ///
+    /// The point is the row's action group: 66pt wide, sitting before the 44pt duration column and the
+    /// 14pt trailing padding, with the three 20pt buttons ending at its right edge — so the middle one
+    /// (ⓘ) is centred 20pt in from the group's trailing edge.
+    private static func setMouseOverRow(rowIndex: Int = 2) async {
         guard let window = await mainWindow() else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 400_000_000)
         let frame = window.frame
-        let row = CGPoint(x: frame.minX + 560, y: frame.maxY - 118)
-        CGWarpMouseCursorPosition(row)
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        let button = CGPoint(x: frame.minX + 1103, y: frame.maxY - 118)
-        CGWarpMouseCursorPosition(button)
-        // A synthetic move event is what SwiftUI's hover tracking reacts to when the pointer is
-        // already inside the window.
+        // Row geometry: 44pt header, then 30pt-minimum rows that grow for long titles. Row 3 sits
+        // around 100pt down in the fixed capture layout.
+        let y = frame.height - CGFloat(104 + rowIndex * 62)
+        // Two moves: the first makes SwiftUI notice the pointer is in the window, the second lands it
+        // on the button. A single warp sometimes leaves hover tracking with nothing to react to.
+        await movePointer(in: window, to: CGPoint(x: frame.width - 300, y: y))
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        await movePointer(in: window, to: CGPoint(x: frame.width - 90, y: y))
+        // Longer than `HoverTip.delay`, so the bubble is up when the shutter opens.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+    }
+
+    /// Parks the pointer on the queue button in the player bar, which is the state the hover feedback
+    /// exists for: the control under the pointer carries a wash, and after `HoverTip.delay` its name in
+    /// a bubble. Only reachable with the pointer actually on the button, so it cannot be captured by
+    /// rendering a page alone.
+    private static func setMouseOverQueueButton() async {
+        guard let window = await mainWindow() else { return }
+        // SwiftUI only tracks hover inside a key window, and a capture run never makes the app
+        // active on its own.
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        let frame = window.frame
+        // The queue button is in the player bar, the window's bottom strip. Window coordinates count
+        // from the bottom-left; the window server's count from the top-left of the screen.
+        await movePointer(
+            in: window,
+            to: CGPoint(x: frame.width - 82, y: Theme.Metrics.playerBarHeight / 2)
+        )
+        // Longer than `HoverTip.delay`, so the bubble is up when the shutter opens.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+    }
+
+    /// Moves the pointer to a point in the window's own coordinates and delivers the move event, so
+    /// SwiftUI's hover tracking sees it arrive. Warping the cursor alone changes where it is without
+    /// producing the event tracking areas listen for.
+    private static func movePointer(in window: NSWindow, to point: CGPoint) async {
+        let frame = window.frame
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        CGWarpMouseCursorPosition(
+            CGPoint(x: frame.minX + point.x, y: screenHeight - (frame.minY + point.y))
+        )
+        try? await Task.sleep(nanoseconds: 250_000_000)
         if let move = NSEvent.mouseEvent(
-            with: .mouseMoved, location: NSPoint(x: 1103, y: frame.height - 118),
+            with: .mouseMoved, location: point,
             modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
         ) {
             window.sendEvent(move)
         }
-        try? await Task.sleep(nanoseconds: 800_000_000)
     }
 
     private static func setWindowSize(_ size: CGSize) async {

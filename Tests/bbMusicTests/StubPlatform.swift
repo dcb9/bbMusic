@@ -45,6 +45,8 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
     var artistSearchResults: [Artist] = []
     var searchAlbums: [Album] = []
     var searchPlaylists: [SearchPlaylist] = []
+    /// Song results, in the order the upstream would return them.
+    var searchSongs: [Track] = []
     private(set) var searches: [(query: String, kind: SearchKind)] = []
 
     func search(_ query: String, kind: SearchKind, page: Int) async throws -> SearchResults {
@@ -61,7 +63,8 @@ final class StubPlatform: MusicPlatform, @unchecked Sendable {
             results.playlists = searchPlaylists
             results.totalAvailable = searchPlaylists.count
         case .song:
-            break
+            results.songs = searchSongs
+            results.totalAvailable = searchSongs.count
         }
         return results
     }

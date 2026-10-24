@@ -6,6 +6,8 @@ struct RootView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
     @Environment(\.colorScheme) private var colorScheme
+    /// One bubble for the whole window, so no scroll view can clip it.
+    @StateObject private var hoverTips = HoverTipPresenter()
 
     var body: some View {
         let palette = Palette.resolve(colorScheme)
@@ -67,6 +69,10 @@ struct RootView: View {
         .background(palette.content)
         .tint(palette.accent)
         .environment(\.palette, palette)
+        .environmentObject(hoverTips)
+        // Over everything, including the player bar and every list: a tooltip belongs to the window,
+        // not to the row it describes.
+        .overlay { HoverTipOverlay(presenter: hoverTips) }
         .background(WindowChrome())
         // The window's content starts at the very top edge, so the sidebar's plate reaches it and the
         // traffic lights float over it instead of sitting in a system strip of their own.
@@ -585,6 +591,7 @@ private struct SearchPane: View {
 private struct TracksPane: View {
     @ObservedObject var model: AppModel
     @ObservedObject var player: Player
+    @Environment(\.palette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -751,11 +758,46 @@ private struct TracksPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            // Play the whole list, under the description: the description is what a user reads to
+            // decide, so the action belongs at the end of it. Absent on chart pages — a chart is
+            // paged, so "play the whole chart" would only ever play the part already loaded.
+            if let playTitle {
+                Button {
+                    model.playWholeList()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9.5))
+                        Text(playTitle)
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .foregroundStyle(palette.playButtonGlyph)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(palette.playButton)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.libraryTracks.isEmpty)
+                .opacity(model.libraryTracks.isEmpty ? 0.5 : 1)
+                .hoverCursor(isEnabled: !model.libraryTracks.isEmpty)
+                .padding(.top, 6)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.02))
+    }
+
+    /// The label for the page-level play button, or nil where the page should not offer one.
+    private var playTitle: String? {
+        if model.currentAlbum != nil { return "播放专辑" }
+        if model.currentPlaylistName != nil { return "播放歌单" }
+        return nil
     }
 
     /// The open page's own name, falling back to the section. Nothing from a page the user has
@@ -1090,6 +1132,9 @@ private struct QueuePane: View {
                                 isCurrent: player.currentTrack?.id == track.id,
                                 isPlaying: player.currentTrack?.id == track.id && player.isPlaying,
                                 isSelected: model.selectedTrackID == track.id,
+                                // The queue answers "what is playing", so its playing row is the one
+                                // that has to stand out — not whichever row was clicked to open it.
+                                lead: .playback,
                                 showsAlbum: true,
                                 isLiked: model.isLiked(track),
                                 onToggleLike: { Task { await model.toggleLike(track) } },
@@ -1245,6 +1290,9 @@ private struct TrackRow: View {
     let isCurrent: Bool
     let isPlaying: Bool
     let isSelected: Bool
+    /// Which of `isCurrent` / `isSelected` paints the accent when both are true. A queue is read to
+    /// see what is playing, so there the playing row wins; elsewhere the selection does.
+    var lead: RowHighlight.Lead = .selection
     /// Album column. Hidden inside a playlist, where every row would repeat the same or an
     /// irrelevant album; shown in search results and on album pages.
     var showsAlbum: Bool = true
@@ -1306,7 +1354,7 @@ private struct TrackRow: View {
             }
             .buttonStyle(.plain)
             .disabled(track.artistID == nil)
-            .onHover { inside in if inside, track.artistID != nil { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+            .hoverCursor(isEnabled: track.artistID != nil)
 
             if showsAlbum {
                 Button {
@@ -1322,6 +1370,9 @@ private struct TrackRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(track.albumID == nil)
+                // Same hand as the artist column: both open a page, and only the album that actually
+                // carries an id is a link — the rest keep the normal pointer.
+                .hoverCursor(isEnabled: track.albumID != nil)
             }
 
             // Row actions sit before the duration and only appear on hover: a permanent pair of
@@ -1337,7 +1388,8 @@ private struct TrackRow: View {
                 rowAction(
                     isLiked ? "heart.fill" : "heart",
                     help: isLiked ? "取消红心" : "加入我喜欢",
-                    tint: isLiked ? palette.accent : Color.secondary.opacity(0.5),
+                    tint: Color.secondary.opacity(0.5),
+                    activeTint: isLiked ? palette.accent : nil,
                     action: onToggleLike
                 )
             }
@@ -1355,7 +1407,7 @@ private struct TrackRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .frame(minHeight: Theme.Metrics.rowMinHeight)
-        .background(rowBackground)
+        .background(highlight.background(accent: palette.accent))
         .contentShape(Rectangle())
     }
 
@@ -1365,15 +1417,14 @@ private struct TrackRow: View {
         _ symbol: String,
         help: String,
         tint: Color = .secondary,
+        activeTint: Color? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        RowActionButton(symbol: symbol, help: help, tint: tint, action: action)
+        RowActionButton(symbol: symbol, help: help, tint: tint, activeTint: activeTint, action: action)
     }
 
-    private var rowBackground: Color {
-        if isSelected { return palette.accent.opacity(0.14) }
-        if isCurrent { return Color.primary.opacity(0.06) }
-        return .clear
+    private var highlight: RowHighlight {
+        RowHighlight.resolve(isCurrent: isCurrent, isSelected: isSelected, lead: lead)
     }
 }
 
@@ -1409,10 +1460,7 @@ private struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack == nil)
-            .help("歌曲详情")
-            .onHover { inside in
-                if inside, player.currentTrack != nil { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
+            .hoverFeedback("歌曲详情", tint: .primary, isEnabled: player.currentTrack != nil)
 
             transport
 
@@ -1452,10 +1500,9 @@ private struct PlayerBarView: View {
             } label: {
                 Image(systemName: player.repeatMode.symbol)
                     .font(.system(size: 11))
-                    .foregroundStyle(player.repeatMode == .off ? .secondary : palette.accent)
             }
             .buttonStyle(.plain)
-            .help("播放模式")
+            .hoverFeedback("播放模式 · \(player.repeatMode.label)", tint: repeatTint)
 
             // Queue and lyrics live at the far right of the player bar: both belong to playback,
             // not navigation. 「词」 sits to the queue's right and toggles — pressing it while the
@@ -1472,23 +1519,25 @@ private struct PlayerBarView: View {
                             .font(.system(size: 9.5).monospacedDigit())
                     }
                 }
-                .foregroundStyle(model.showQueue ? palette.accent : .secondary)
             }
             .buttonStyle(.plain)
-            .help("播放队列")
+            .hoverFeedback("播放队列", tint: model.showQueue ? palette.accent : .secondary)
 
             Button {
                 model.toggleLyrics()
             } label: {
                 Text("词")
                     .font(.system(size: 11, weight: model.pane == .lyrics ? .semibold : .regular))
-                    .foregroundStyle(model.pane == .lyrics ? palette.accent : .secondary)
                     .frame(width: 16)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack == nil)
-            .help(model.pane == .lyrics ? "回到列表" : "查看歌词")
+            .hoverFeedback(
+                model.pane == .lyrics ? "回到列表" : "歌词",
+                tint: model.pane == .lyrics ? palette.accent : .secondary,
+                isEnabled: player.currentTrack != nil
+            )
         }
         .padding(.horizontal, 12)
         .frame(height: Theme.Metrics.playerBarHeight)
@@ -1516,15 +1565,32 @@ private struct PlayerBarView: View {
                 Text("当前歌曲可用 \(player.availableQualities.count) 种音质")
             }
         } label: {
+            // No `foregroundStyle` here: the hover modifier owns the label's colour, and a style set
+            // inside the label would win over it — leaving this one control as the only one on the bar
+            // that never turns accent when the pointer is on it.
             Text(qualityLabel)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(player.currentTrack == nil ? .tertiary : .secondary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(player.currentTrack == nil)
-        .help("音质")
+        .hoverFeedback("音质", tint: qualityTint, isEnabled: player.currentTrack != nil)
+    }
+
+    /// The repeat button's resting colour: accent while a mode is on, secondary while it is off.
+    private var repeatTint: Color {
+        player.repeatMode == .off ? .secondary : palette.accent
+    }
+
+    /// The quality label's resting colour: tertiary with nothing playing, secondary otherwise. It lives
+    /// here rather than inside the label so the hover modifier can own the colour and still restore it.
+    private var qualityTint: Color {
+        // The exact semantic the label used before the hover modifier took over its colour: tertiary
+        // label when there is nothing playing, secondary label otherwise.
+        player.currentTrack == nil
+            ? Color(nsColor: .tertiaryLabelColor)
+            : Color(nsColor: .secondaryLabelColor)
     }
 
     private var qualityLabel: String {
@@ -1563,6 +1629,7 @@ private struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack == nil)
+            .hoverFeedback("上一首", tint: .primary, isEnabled: player.currentTrack != nil)
 
             Button { player.togglePlayPause() } label: {
                 ZStack {
@@ -1582,14 +1649,20 @@ private struct PlayerBarView: View {
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack == nil)
+            .hoverFeedback(
+                player.isPlaying ? "暂停" : "播放",
+                tint: .primary,
+                shape: .circle,
+                isEnabled: player.currentTrack != nil
+            )
 
             Button { player.next() } label: {
                 Image(systemName: "forward.fill").font(.system(size: 11))
             }
             .buttonStyle(.plain)
             .disabled(player.currentTrack == nil)
+            .hoverFeedback("下一首", tint: .primary, isEnabled: player.currentTrack != nil)
         }
-        .foregroundStyle(.primary)
     }
 
     private func timeText(_ seconds: TimeInterval) -> String {

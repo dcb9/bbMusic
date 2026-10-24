@@ -18,6 +18,16 @@ final class Player: ObservableObject {
             case .one: return "repeat.1"
             }
         }
+
+        /// The mode in the listener's words. The glyph alone cannot tell 顺序 from 全部循环 — `→`
+        /// and `repeat` are both arrows — so the hover label is where the current mode is stated.
+        var label: String {
+            switch self {
+            case .off: return "顺序播放"
+            case .all: return "全部循环"
+            case .one: return "单曲循环"
+            }
+        }
     }
 
     // MARK: - Published state

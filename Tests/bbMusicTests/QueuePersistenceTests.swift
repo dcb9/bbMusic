@@ -147,13 +147,24 @@ final class CollectionToggleTests: XCTestCase {
 }
 
 /// The row action's hover state is the only cue that says which of the three icons a click will hit.
+///
+/// The wash itself now comes from the window's shared `hoverFeedback` (covered by
+/// `HoverTipPlacementTests` and `HoverTipTests`), so what belongs here is the row action's own
+/// contract: a resting colour that keeps a set heart on the accent.
 @MainActor
 final class RowActionHoverTests: XCTestCase {
-    func testHoverFillIsTransparentUntilHovered() {
+    /// A heart that is already set is drawn in the accent even with no pointer on it; the hover only
+    /// takes it back to the same accent. The neutral resting colour belongs to the unset heart.
+    func testASetHeartRestsOnTheAccent() {
         let accent = Color(hex: 0x2E6B4F)
-        XCTAssertEqual(RowActionButton.fill(isHovering: false, accent: accent), .clear,
-                       "未悬停时不应有底色")
-        XCTAssertNotEqual(RowActionButton.fill(isHovering: true, accent: accent), .clear,
-                          "悬停时应有淡淡的底色")
+        let set = RowActionButton(
+            symbol: "heart.fill", help: "取消红心", tint: .secondary.opacity(0.5),
+            activeTint: accent, action: {}
+        )
+        let unset = RowActionButton(symbol: "heart", help: "加入我喜欢", action: {})
+
+        XCTAssertNotNil(set.activeTint, "已红心的按钮以强调色为静止色")
+        XCTAssertEqual(set.activeTint, accent)
+        XCTAssertNil(unset.activeTint, "未红心时用中性色")
     }
 }

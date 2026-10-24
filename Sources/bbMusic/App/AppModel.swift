@@ -1022,6 +1022,43 @@ final class AppModel: ObservableObject {
         await openAlbum(id: albumID, name: track.album, artist: track.artist)
     }
 
+    /// Plays the song the detail page is describing, exactly as the row's ▶ would have.
+    ///
+    /// The detail page can be reached from several places, and "play this" has to mean the same thing
+    /// it did on the list it was opened from:
+    ///
+    /// - from a search result, the song's whole album becomes the queue (search results are unrelated
+    ///   songs, so queuing the rest of the result list would be a random assortment);
+    /// - from any other list, that list becomes the queue with this song at its own position — which is
+    ///   the rule the row's ▶ button already follows;
+    /// - from the player bar, or from a song whose list is no longer on screen, only this song is queued.
+    ///
+    /// The last case is why this cannot simply reuse the list: the page describes a track, and nothing
+    /// on it says which list that track came from.
+    func playFromDetailPage(_ track: Track) async {
+        if section == .search, route == nil {
+            await playFromSearch(track)
+            return
+        }
+        let list = libraryTracks
+        if let index = list.firstIndex(where: { $0.id == track.id }) {
+            selectedTrackID = track.id
+            player.play(tracks: list, startingAt: index)
+            return
+        }
+        selectedTrackID = track.id
+        player.playNow(track)
+    }
+
+    /// Plays a whole page's list from its first track — what an album or playlist page's 播放 button
+    /// does. No-op on an empty list rather than clearing the queue.
+    func playWholeList() {
+        let list = libraryTracks
+        guard !list.isEmpty else { return }
+        selectedTrackID = list[0].id
+        player.play(tracks: list, startingAt: 0)
+    }
+
     /// Plays a row from the search results.
     ///
     /// Search results are a flat list of unrelated songs, so queuing "the rest of the list" means
