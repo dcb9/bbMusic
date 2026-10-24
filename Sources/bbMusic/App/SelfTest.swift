@@ -500,6 +500,24 @@ struct SelfTest {
             ))
         }
 
+        // 6c5e4. Row actions: playing is a single click on the row's own button, and the detail button
+        // opens the page for that row while leaving the list underneath it.
+        if model.connection.isConnected, !model.libraryTracks.isEmpty {
+            let track = model.libraryTracks[min(3, model.libraryTracks.count - 1)]
+            model.pane = .list
+            model.showDetail(for: track)
+            let opened = model.pane == .trackDetail && model.player.currentTrack?.id == track.id
+            model.pane = .list
+            let returned = model.pane == .list
+            steps.append(Step(
+                name: "row-actions",
+                ok: opened && returned,
+                detail: opened && returned
+                    ? "详情打开 \(track.title.prefix(16))，返回回到列表"
+                    : "详情开关异常（opened=\(opened) returned=\(returned)）"
+            ))
+        }
+
         // 6c5f. The song detail page's links: an artist name searches that artist, the album opens,
         // and the queue can be opened from the page and closed back to it.
         if model.connection.isConnected, let playing = model.player.currentTrack {

@@ -458,6 +458,9 @@ private struct SearchPane: View {
                 // own album instead of the rest of the result list.
                 onPlay: { track in
                     Task { await model.playFromSearch(track) }
+                },
+                onShowDetail: { track in
+                    model.showDetail(for: track)
                 }
             )
         case .album:
@@ -661,7 +664,8 @@ private struct TracksPane: View {
                     onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
                     onOpenAlbum: { id, name, artist in
                         Task { await model.openAlbum(id: id, name: name, artist: artist) }
-                    }
+                    },
+                    onShowDetail: { track in model.showDetail(for: track) }
                 )
                 // A chart always says how much of it is on screen — "20 / 100" while there is more
                 // to fetch, and the same line settled once everything is loaded. It used to appear
@@ -878,7 +882,8 @@ private struct ArtistDetailPane: View {
                             onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
                             onOpenAlbum: { id, name, artist in
                                 Task { await model.openAlbum(id: id, name: name, artist: artist) }
-                            }
+                            },
+                            onShowDetail: { track in model.showDetail(for: track) }
                         )
                     }
                 case .albums:
@@ -1026,18 +1031,28 @@ private struct QueuePane: View {
                                 onOpenArtist: { id, name in Task { await model.openArtist(id: id, name: name) } },
                                 onOpenAlbum: { id, name, artist in
                                     Task { await model.openAlbum(id: id, name: name, artist: artist) }
+                                },
+                                onPlay: {
+                                    model.selectedTrackID = track.id
+                                    player.play(tracks: player.queue, startingAt: index)
+                                },
+                                onShowDetail: {
+                                    model.selectedTrackID = track.id
+                                    model.showDetail(for: track)
                                 }
                             )
-                            .simultaneousGesture(
-                                TapGesture(count: 2).onEnded {
+                            .background(RowClickCatcher(onClick: { model.selectedTrackID = track.id }))
+                            .contextMenu {
+                                Button("播放") {
                                     model.selectedTrackID = track.id
                                     player.play(tracks: player.queue, startingAt: index)
                                 }
-                            )
-                            .onTapGesture { model.selectedTrackID = track.id }
-                            .contextMenu {
+                                Button("详情") {
+                                    model.selectedTrackID = track.id
+                                    model.showDetail(for: track)
+                                }
+                                Divider()
                                 Button("从队列移除") { player.removeFromQueue(at: IndexSet(integer: index)) }
-                                Button("播放这首") { player.play(tracks: player.queue, startingAt: index) }
                             }
                             Divider().opacity(0.35)
                         }
@@ -1065,9 +1080,12 @@ private struct TrackList: View {
     var onToggleLike: (Track) -> Void = { _ in }
     var onOpenArtist: (String, String) -> Void = { _, _ in }
     var onOpenAlbum: (String, String, String) -> Void = { _, _, _ in }
-    /// What a double-click plays. Defaults to "this list, from this row"; the search pane supplies
-    /// its own, because a search result list is not an album or a playlist.
+    /// What the row's 播放 button does. Defaults to "this list, from this row"; the search pane
+    /// supplies its own, because a search result list is not an album or a playlist.
     var onPlay: ((Track) -> Void)?
+    /// What the row's 详情 button and the context menu's 详情 do. The page it opens knows how to come
+    /// back to the list it was opened from.
+    var onShowDetail: ((Track) -> Void)?
 
     var body: some View {
         ScrollView {
@@ -1092,13 +1110,27 @@ private struct TrackList: View {
                         isLiked: isLiked(track),
                         onToggleLike: { onToggleLike(track) },
                         onOpenArtist: onOpenArtist,
-                        onOpenAlbum: onOpenAlbum
+                        onOpenAlbum: onOpenAlbum,
+                        onPlay: {
+                            selectedID = track.id
+                            if let onPlay {
+                                onPlay(track)
+                            } else {
+                                player.play(tracks: tracks, startingAt: index)
+                            }
+                        },
+                        onShowDetail: onShowDetail.map { show in
+                            { selectedID = track.id; show(track) }
+                        }
                     )
-                    // `.simultaneousGesture` instead of two `onTapGesture`s: stacking a single- and a
-                    // double-tap gesture makes SwiftUI wait for the single-tap to fail before it can
-                    // resolve the double-tap, which is what made selection feel a second late.
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
+                    // Selection is handled by AppKit on mouse-down. There is no double-click gesture
+                    // any more — playing is a button and a menu item — so nothing has to wait out
+                    // `NSEvent.doubleClickInterval` before a click registers.
+                    .background(
+                        RowClickCatcher(onClick: { selectedID = track.id })
+                    )
+                    .contextMenu {
+                        Button("播放") {
                             selectedID = track.id
                             if let onPlay {
                                 onPlay(track)
@@ -1106,9 +1138,18 @@ private struct TrackList: View {
                                 player.play(tracks: tracks, startingAt: index)
                             }
                         }
-                    )
-                    .onTapGesture {
-                        selectedID = track.id
+                        Button("详情") {
+                            selectedID = track.id
+                            onShowDetail?(track)
+                        }
+                        Divider()
+                        Button(isLiked(track) ? "取消红心" : "加入我喜欢") { onToggleLike(track) }
+                        if track.artistID != nil {
+                            Button("歌手") { onOpenArtist(track.artistID!, track.artist) }
+                        }
+                        if track.albumID != nil {
+                            Button("专辑") { onOpenAlbum(track.albumID!, track.album, track.artist) }
+                        }
                     }
                     Divider().opacity(0.35)
                     if index == tracks.count - 1, let onReachEnd {
@@ -1146,6 +1187,12 @@ private struct TrackRow: View {
     var onToggleLike: () -> Void = {}
     var onOpenArtist: (String, String) -> Void = { _, _ in }
     var onOpenAlbum: (String, String, String) -> Void = { _, _, _ in }
+    /// Plays this row. `nil` hides the button (a list that has no notion of playing, e.g. the queue's
+    /// own rows would still have one, so it is always supplied in practice).
+    var onPlay: (() -> Void)?
+    /// Opens this row's song detail page. `nil` hides the button.
+    var onShowDetail: (() -> Void)?
+    @State private var isHovering = false
     @Environment(\.palette) private var palette
 
     var body: some View {
@@ -1212,27 +1259,56 @@ private struct TrackRow: View {
                 .disabled(track.albumID == nil)
             }
 
-            Button {
-                onToggleLike()
-            } label: {
-                Image(systemName: isLiked ? "heart.fill" : "heart")
-                    .font(.system(size: 11))
-                    .foregroundStyle(isLiked ? palette.accent : Color.secondary.opacity(0.5))
+            // Row actions sit before the duration and only appear on hover: a permanent pair of
+            // buttons on every row would out-shout the content, and they are one click away when the
+            // pointer is actually on the row.
+            HStack(spacing: 2) {
+                if let onPlay {
+                    rowAction("play.fill", help: "播放", action: onPlay)
+                }
+                if let onShowDetail {
+                    rowAction("info.circle", help: "详情", action: onShowDetail)
+                }
+                rowAction(
+                    isLiked ? "heart.fill" : "heart",
+                    help: isLiked ? "取消红心" : "加入我喜欢",
+                    tint: isLiked ? palette.accent : Color.secondary.opacity(0.5),
+                    action: onToggleLike
+                )
             }
-            .buttonStyle(.plain)
-            .frame(width: 20)
-            .help(isLiked ? "取消红心" : "加入我喜欢")
+            // Reserved at the full width of all three actions so the duration column never shifts
+            // when the pointer enters a row.
+            .frame(width: 66, alignment: .trailing)
+            .opacity(isHovering || isSelected ? 1 : 0)
 
             Text(track.durationText)
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .trailing)
         }
+        .onHover { isHovering = $0 }
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .frame(minHeight: Theme.Metrics.rowMinHeight)
         .background(rowBackground)
         .contentShape(Rectangle())
+    }
+
+    private func rowAction(
+        _ symbol: String,
+        help: String,
+        tint: Color = .secondary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(tint)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private var rowBackground: Color {

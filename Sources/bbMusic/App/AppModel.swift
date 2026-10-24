@@ -251,6 +251,23 @@ final class AppModel: ObservableObject {
         pane = .lyrics
     }
 
+    /// Opens the song detail page for a specific row.
+    ///
+    /// Distinct from `toggleTrackDetail()`, which is about whatever is playing: this one is about the
+    /// track the user clicked, and it starts that track so the page has something to describe. The
+    /// page is a pane like the lyrics, so leaving it with 返回 lands back on the list it was opened
+    /// from — the list is still underneath, unchanged.
+    func showDetail(for track: Track) {
+        if player.currentTrack?.id != track.id {
+            // Queue just this track: the user asked to look at it, not to reshuffle what is playing.
+            player.playNow(track)
+        }
+        showQueue = false
+        queueReturnPane = nil
+        pane = .trackDetail
+        loadTrackDetail()
+    }
+
     /// Fetches the detail rows for the current track. A failure is not reported: the page simply
     /// shows the rows it has, because these facts are decoration next to playback.
     func loadTrackDetail() {

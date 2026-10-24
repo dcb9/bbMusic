@@ -145,6 +145,15 @@ enum ScreenshotCapture {
             model.pane = .lyrics
         }))
 
+        // 11b. A row with its hover actions visible: play, detail and the heart.
+        shots.append(("13-row-actions", {
+            model.clearRoutes()
+            model.section = .daily
+            await model.selectSection(.daily)
+            model.selectedTrackID = model.libraryTracks.dropFirst(2).first?.id
+            await setMouseOverRow()
+        }))
+
         // 12. The song's own page, reached from the player bar's left block. A multi-artist track is
         // preferred so the screenshot shows the credit split into separate, clickable names.
         shots.append(("12-track-detail", {
@@ -177,6 +186,16 @@ enum ScreenshotCapture {
         model.shutdown()
         try? await Task.sleep(nanoseconds: 400_000_000)
         return failures == 0 ? 0 : 1
+    }
+
+    /// Parks the pointer over the third row so hover-only affordances are captured. A screenshot of
+    /// a row without the pointer on it would simply not show them.
+    private static func setMouseOverRow() async {
+        guard let window = await mainWindow() else { return }
+        let content = window.frame
+        let point = CGPoint(x: content.minX + 520, y: content.maxY - 210)
+        CGWarpMouseCursorPosition(point)
+        try? await Task.sleep(nanoseconds: 400_000_000)
     }
 
     private static func setWindowSize(_ size: CGSize) async {

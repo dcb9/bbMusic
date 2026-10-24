@@ -18,6 +18,14 @@ struct BbMusicApp: App {
                                 exit(code)
                             }
                         }
+                } else if ClickProbe.isRequested {
+                    RootView(model: model, player: model.player)
+                        .onAppear {
+                            Task { @MainActor in
+                                let code = await ClickProbe.run(model: model)
+                                exit(code)
+                            }
+                        }
                 } else if SelfTest.isRequested {
                     SelfTestView(model: model)
                 } else {
