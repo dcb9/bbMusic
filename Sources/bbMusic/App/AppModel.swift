@@ -117,8 +117,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var writeError: String?
     /// Short-lived confirmation for a successful write ("已收藏到 QQ 音乐").
     @Published private(set) var writeSuccess: String?
-    /// Row selection is separate from playback: clicking selects, double-clicking plays.
+    /// Row selection is separate from playback: a click selects, the row's ▶ button plays.
     @Published var selectedTrackID: String?
+    /// The track the song detail page describes. Deliberately independent of `player.currentTrack`:
+    /// looking at a song must not start it, and the page must keep describing the same song while the
+    /// queue moves on. `nil` means "whatever is playing", which is what the player-bar entry uses.
+    @Published private(set) var detailTrack: Track?
     /// Light / dark / follow the system. Persisted and applied to the window's appearance, so the
     /// palette the views already resolve from `colorScheme` follows along.
     @Published private(set) var appearance: AppearanceMode = .system
@@ -170,8 +174,9 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.scrobbler.playerIsPreview = self.player.isPreview
             self.scrobbler.trackStarted(track, isPreview: self.player.isPreview)
-            // The detail page follows the song, so a new track replaces its facts.
-            if self.pane == .trackDetail { self.loadTrackDetail() }
+            // A detail page that is following playback re-reads its facts; one that is showing a song
+            // the user picked keeps describing that song.
+            if self.pane == .trackDetail, self.detailTrack == nil { self.loadTrackDetail() }
         }
         player.onProgress = { [weak self] elapsed in
             self?.scrobbler.updateProgress(elapsed)
@@ -228,12 +233,14 @@ final class AppModel: ObservableObject {
     func toggleTrackDetail() {
         guard player.currentTrack != nil else { return }
         if pane == .trackDetail, !showQueue {
-            pane = .list
+            closeTrackDetail()
             return
         }
         // The queue is an overlay on top of the pages; asking for a page puts it away.
         showQueue = false
         queueReturnPane = nil
+        // The player-bar entry is about what is playing, so it follows the queue.
+        detailTrack = nil
         pane = .trackDetail
         loadTrackDetail()
     }
@@ -253,31 +260,32 @@ final class AppModel: ObservableObject {
 
     /// Opens the song detail page for a specific row.
     ///
-    /// Distinct from `toggleTrackDetail()`, which is about whatever is playing: this one is about the
-    /// track the user clicked, and it starts that track so the page has something to describe. The
-    /// page is a pane like the lyrics, so leaving it with 返回 lands back on the list it was opened
-    /// from — the list is still underneath, unchanged.
+    /// Looking is not playing: this only records which song to describe. It used to start the track so
+    /// the page would have something to read, which meant opening 详情 began playback — a side effect
+    /// nobody asked for, and one that replaced the queue with a single song.
+    ///
+    /// The page is a pane like the lyrics, so 返回 lands back on the list it was opened from.
     func showDetail(for track: Track) {
-        if player.currentTrack?.id != track.id {
-            // Queue just this track: the user asked to look at it, not to reshuffle what is playing.
-            player.playNow(track)
-        }
+        detailTrack = track
         showQueue = false
         queueReturnPane = nil
         pane = .trackDetail
         loadTrackDetail()
     }
 
-    /// Fetches the detail rows for the current track. A failure is not reported: the page simply
-    /// shows the rows it has, because these facts are decoration next to playback.
+    /// The song the detail page should describe right now.
+    var trackOnDetailPage: Track? { detailTrack ?? player.currentTrack }
+
+    /// Fetches the detail rows for the song the page is describing. A failure is not reported: the page
+    /// simply shows the rows it has, because these facts are decoration.
     func loadTrackDetail() {
         trackDetailTask?.cancel()
         trackDetail = nil
-        guard let track = player.currentTrack else { return }
+        guard let track = trackOnDetailPage else { return }
         trackDetailTask = Task { [weak self] in
             guard let self else { return }
             let detail = try? await self.platform.trackDetail(for: track)
-            guard !Task.isCancelled, self.player.currentTrack?.id == track.id else { return }
+            guard !Task.isCancelled, self.trackOnDetailPage?.id == track.id else { return }
             self.trackDetail = detail
         }
     }
@@ -400,6 +408,7 @@ final class AppModel: ObservableObject {
         pane = .list
         showQueue = false
         queueReturnPane = nil
+        detailTrack = nil
         clearRoutes()
         sectionTracks = []
         sectionError = nil
@@ -1102,6 +1111,13 @@ final class AppModel: ObservableObject {
     /// Whether an album is already in the user's collection.
     func isCollected(_ album: Album) -> Bool {
         albums.contains { $0.id == album.id }
+    }
+
+    /// Leaves the song detail page, dropping the song it was describing so the next visit starts from
+    /// whatever is playing.
+    func closeTrackDetail() {
+        pane = .list
+        detailTrack = nil
     }
 
     /// Drops the detail pages and the search results behind them.

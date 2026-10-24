@@ -34,9 +34,9 @@ final class ClickLatencyTests: XCTestCase {
         XCTAssertEqual(NSEvent.doubleClickInterval, 0.5, accuracy: 0.001)
     }
 
-    /// Opening the detail page from a row starts that row and lands on the detail pane, with the list
-    /// still underneath it — 返回 therefore goes back to the list it came from.
-    func testShowDetailOpensTheRowsTrackAndKeepsTheList() async {
+    /// Looking at a song is not playing it: the detail page must describe the clicked row without
+    /// touching playback or the queue.
+    func testShowDetailDescribesTheRowWithoutPlayingIt() async {
         let tracks = (0..<5).map { Fixture.track("t\($0)") }
         model.player.play(tracks: tracks, startingAt: 0)
         model.pane = .list
@@ -44,11 +44,32 @@ final class ClickLatencyTests: XCTestCase {
         model.showDetail(for: tracks[3])
 
         XCTAssertEqual(model.pane, .trackDetail)
-        XCTAssertEqual(model.player.currentTrack?.id, "t3", "详情应描述被点的那首")
-        XCTAssertEqual(model.player.queue.map(\.id), ["t3"], "查看详情不应重排队列")
+        XCTAssertEqual(model.trackOnDetailPage?.id, "t3", "详情应描述被点的那首")
+        XCTAssertEqual(model.player.currentTrack?.id, "t0", "打开详情不应改变正在播放的歌")
+        XCTAssertEqual(model.player.queue.map(\.id), tracks.map(\.id), "打开详情不应重排队列")
+        // `isPlaying` needs a real stream (there is none in a unit test), so the queue and current
+        // track above are what prove playback was left alone.
+    }
 
-        model.pane = .list
+    func testClosingDetailReturnsToTheListAndForgetsThePick() async {
+        let tracks = (0..<5).map { Fixture.track("t\($0)") }
+        model.player.play(tracks: tracks, startingAt: 2)
+        model.showDetail(for: tracks[4])
+
+        model.closeTrackDetail()
+
         XCTAssertEqual(model.pane, .list, "返回应回到列表")
+        XCTAssertEqual(model.trackOnDetailPage?.id, "t2", "再次进入应回到当前播放的那首")
+    }
+
+    /// The player-bar entry follows playback, so it keeps describing whatever is playing.
+    func testPlayerBarDetailFollowsPlayback() async {
+        let tracks = (0..<3).map { Fixture.track("t\($0)") }
+        model.player.play(tracks: tracks, startingAt: 1)
+
+        model.toggleTrackDetail()
+        XCTAssertEqual(model.pane, .trackDetail)
+        XCTAssertEqual(model.trackOnDetailPage?.id, "t1")
     }
 
     /// Selecting a row is pure state: no network, no disk, no view rebuild of the list contents.

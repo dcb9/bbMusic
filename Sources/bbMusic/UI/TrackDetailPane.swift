@@ -15,7 +15,9 @@ struct TrackDetailPane: View {
     let onBack: () -> Void
     @Environment(\.palette) private var palette
 
-    private var track: Track? { player.currentTrack }
+    /// The song this page describes. It is not necessarily the song playing: opening 详情 from a row
+    /// shows that row without starting it.
+    private var track: Track? { model.trackOnDetailPage }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,7 +133,8 @@ struct TrackDetailPane: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(player.isPreview ? "正在播放 · 试听 30 秒" : "正在播放")
+                // Only claim "正在播放" when it actually is. Looking at a song is not playing it.
+                Text(kickerText)
                     .font(.system(size: 9.5, weight: .medium))
                     .tracking(1.1)
                     .foregroundStyle(.tertiary)
@@ -171,6 +174,13 @@ struct TrackDetailPane: View {
     }
 
     /// Everything on the secondary line after the album: year, then company.
+    private var kickerText: String {
+        guard let track else { return "歌曲详情" }
+        let isCurrent = player.currentTrack?.id == track.id
+        if !isCurrent { return "歌曲详情" }
+        return player.isPreview ? "正在播放 · 试听 30 秒" : "正在播放"
+    }
+
     private func secondaryRest(_ track: Track) -> String? {
         var parts: [String] = []
         if let year = track.year { parts.append(String(year)) }

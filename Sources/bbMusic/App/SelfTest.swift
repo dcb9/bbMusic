@@ -500,21 +500,31 @@ struct SelfTest {
             ))
         }
 
-        // 6c5e4. Row actions: playing is a single click on the row's own button, and the detail button
-        // opens the page for that row while leaving the list underneath it.
+        // 6c5e4. Row actions: the detail button opens the page for that row **without playing it**, and
+        // 返回 goes back to the list. Opening a song to read about it must not start it or replace the
+        // queue — that was a bug, so it is asserted rather than assumed.
+        if model.connection.isConnected {
+            // Its own list: earlier steps leave the charts page open, whose rows are a different list.
+            await model.selectSection(.liked)
+        }
         if model.connection.isConnected, !model.libraryTracks.isEmpty {
-            let track = model.libraryTracks[min(3, model.libraryTracks.count - 1)]
+            let rows = model.libraryTracks
+            let track = rows[min(3, rows.count - 1)]
+            let queueBefore = model.player.queue.map(\.id)
+            let playingBefore = model.player.currentTrack?.id
             model.pane = .list
             model.showDetail(for: track)
-            let opened = model.pane == .trackDetail && model.player.currentTrack?.id == track.id
-            model.pane = .list
+            let opened = model.pane == .trackDetail && model.trackOnDetailPage?.id == track.id
+            let played = model.player.currentTrack?.id != playingBefore
+                || model.player.queue.map(\.id) != queueBefore
+            model.closeTrackDetail()
             let returned = model.pane == .list
             steps.append(Step(
                 name: "row-actions",
-                ok: opened && returned,
-                detail: opened && returned
-                    ? "详情打开 \(track.title.prefix(16))，返回回到列表"
-                    : "详情开关异常（opened=\(opened) returned=\(returned)）"
+                ok: opened && returned && !played,
+                detail: opened && returned && !played
+                    ? "详情打开 \(track.title.prefix(16))（未播放，队列 \(queueBefore.count) 首不变），返回回到列表"
+                    : "详情异常（opened=\(opened) returned=\(returned) 播放被改动=\(played)）"
             ))
         }
 

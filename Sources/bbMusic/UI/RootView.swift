@@ -87,9 +87,9 @@ struct RootView: View {
             LyricsView(player: player) {
                 model.pane = .list
             }
-        } else if model.pane == .trackDetail, player.currentTrack != nil {
+        } else if model.pane == .trackDetail, model.trackOnDetailPage != nil {
             TrackDetailPane(model: model, player: player) {
-                model.pane = .list
+                model.closeTrackDetail()
             }
         } else if let unsupported = model.unsupportedMessage(for: model.section) {
             UnavailablePane(
