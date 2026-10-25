@@ -1142,21 +1142,21 @@ private struct QueuePane: View {
                                 onOpenAlbum: { id, name, artist in
                                     Task { await model.openAlbum(id: id, name: name, artist: artist) }
                                 },
-                                onPlay: {
-                                    model.selectedTrackID = track.id
-                                    player.play(tracks: player.queue, startingAt: index)
-                                },
+                                onPlay: { playQueueEntry(at: index) },
                                 onShowDetail: {
                                     model.selectedTrackID = track.id
                                     model.showDetail(for: track)
                                 }
                             )
-                            .background(RowClickCatcher(onClick: { model.selectedTrackID = track.id }))
+                            .background(
+                                RowClickCatcher(
+                                    onClick: { model.selectedTrackID = track.id },
+                                    // Same as the row's ▶ and the menu item: jump to this entry.
+                                    onDoubleClick: { playQueueEntry(at: index) }
+                                )
+                            )
                             .contextMenu {
-                                Button("播放") {
-                                    model.selectedTrackID = track.id
-                                    player.play(tracks: player.queue, startingAt: index)
-                                }
+                                Button("播放") { playQueueEntry(at: index) }
                                 Button("详情") {
                                     model.selectedTrackID = track.id
                                     model.showDetail(for: track)
@@ -1170,6 +1170,14 @@ private struct QueuePane: View {
                 }
             }
         }
+    }
+
+    /// Jumps the queue to one of its entries. One implementation for the row's ▶, its menu item and a
+    /// double-click.
+    private func playQueueEntry(at index: Int) {
+        guard player.queue.indices.contains(index) else { return }
+        model.selectedTrackID = player.queue[index].id
+        player.play(tracks: player.queue, startingAt: index)
     }
 }
 
@@ -1221,33 +1229,21 @@ private struct TrackList: View {
                         onToggleLike: { onToggleLike(track) },
                         onOpenArtist: onOpenArtist,
                         onOpenAlbum: onOpenAlbum,
-                        onPlay: {
-                            selectedID = track.id
-                            if let onPlay {
-                                onPlay(track)
-                            } else {
-                                player.play(tracks: tracks, startingAt: index)
-                            }
-                        },
+                        onPlay: { play(index: index, track: track) },
                         onShowDetail: onShowDetail.map { show in
                             { selectedID = track.id; show(track) }
                         }
                     )
-                    // Selection is handled by AppKit on mouse-down. There is no double-click gesture
-                    // any more — playing is a button and a menu item — so nothing has to wait out
-                    // `NSEvent.doubleClickInterval` before a click registers.
+                    // Selection is handled by AppKit on mouse-down, and a second press plays. Neither
+                    // waits out `NSEvent.doubleClickInterval`: the click count arrives with the press.
                     .background(
-                        RowClickCatcher(onClick: { selectedID = track.id })
+                        RowClickCatcher(
+                            onClick: { selectedID = track.id },
+                            onDoubleClick: { play(index: index, track: track) }
+                        )
                     )
                     .contextMenu {
-                        Button("播放") {
-                            selectedID = track.id
-                            if let onPlay {
-                                onPlay(track)
-                            } else {
-                                player.play(tracks: tracks, startingAt: index)
-                            }
-                        }
+                        Button("播放") { play(index: index, track: track) }
                         Button("详情") {
                             selectedID = track.id
                             onShowDetail?(track)
@@ -1272,6 +1268,21 @@ private struct TrackList: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Plays a row. One implementation for the row's ▶, its menu item and a double-click, so the three
+    /// can never drift apart — a double-click that queued something different from the button would be
+    /// a bug nobody would think to look for.
+    ///
+    /// The search pane supplies `onPlay` because a search result list is not an album or a playlist;
+    /// every other list falls through to "this list, from this row".
+    private func play(index: Int, track: Track) {
+        selectedID = track.id
+        if let onPlay {
+            onPlay(track)
+        } else {
+            player.play(tracks: tracks, startingAt: index)
         }
     }
 
