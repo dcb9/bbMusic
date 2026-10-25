@@ -128,6 +128,13 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 **推荐 Homebrew**（不弹任何安全提示）：
 
 ```sh
+brew tap dcb9/bbmusic
+brew install --cask bbmusic
+```
+
+也可以一行装完（Homebrew 会自动 tap，但 tap 名与 cask 名都叫 `bbmusic`，所以会重复一次）：
+
+```sh
 brew install --cask dcb9/bbmusic/bbmusic
 ```
 
@@ -183,7 +190,9 @@ git tag v0.1.0 && git push origin v0.1.0
 2. 改本仓库 `.github/homebrew-cask/bbmusic.rb` 的 `version` 与 `sha256`
 3. 把该文件同步到 [`dcb9/homebrew-bbmusic`](https://github.com/dcb9/homebrew-bbmusic) 的 `Casks/bbmusic.rb`
 
-Cask 的 `postflight` 负责清掉 quarantine——这是 `brew install` 能双击即开的唯一原因，改动它前请先读文件开头的说明。
+Cask 的 `postflight_steps` 负责清掉 quarantine——这是 `brew install` 能双击即开的唯一原因，改动它前请先读文件开头的说明。
+
+这个 cask **进不了官方 `homebrew/cask`**：官方要求产物通过 Gatekeeper 检查且不需要用户绕过，ad-hoc 签名的 App 不满足，还会被 deprecated → disabled → removed；自投稿件另有 3 倍知名度门槛。要进官方仓库得先公证（$99/年），所以 cask 只放在自己的 tap 里。
 
 `.github/workflows/ci.yml` 在每次 push/PR 跑测试，并额外组装一次 bundle 校验它没坏——发布脚本
 只在打 tag 时才被真正用到，不该等到发版那天才发现它已经烂了。

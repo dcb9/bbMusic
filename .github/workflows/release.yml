@@ -92,7 +92,8 @@ jobs:
             **推荐：Homebrew**（无任何安全弹窗）
 
             ```sh
-            brew install --cask dcb9/bbmusic/bbmusic
+            brew tap dcb9/bbmusic
+            brew install --cask bbmusic
             ```
 
             **或直接下载**：解开 zip，把 `bbMusic.app` 拖进「应用程序」。
