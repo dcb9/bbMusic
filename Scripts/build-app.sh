@@ -11,6 +11,10 @@ CONFIG="${CONFIG:-debug}"
 APP_NAME="bbMusic"
 BUILD_DIR="$ROOT/.build/$CONFIG"
 APP="$ROOT/dist/$APP_NAME.app"
+# Version stamped into Info.plist. The release workflow passes these from the git tag; a local build
+# keeps the development defaults so `./Scripts/build-app.sh` needs no arguments.
+VERSION="${VERSION:-0.1.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
 echo "==> Building Swift target ($CONFIG)"
 cd "$ROOT"
@@ -33,8 +37,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>local.bbmusic.app</string>
     <key>CFBundleExecutable</key><string>$APP_NAME</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -84,4 +88,4 @@ echo "==> Signing (ad-hoc)"
 codesign --force --sign - --timestamp=none "$SIDECAR_DST/node/bin/node" >/dev/null 2>&1 || true
 codesign --force --deep --sign - "$APP"
 
-echo "==> Done: $APP ($(du -sh "$APP" | cut -f1))"
+echo "==> Done: $APP ($(du -sh "$APP" | cut -f1), version $VERSION ($BUILD_NUMBER))"

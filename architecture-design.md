@@ -141,8 +141,12 @@ sidecar 的实质是 [`@yakult-green-tea/qq-music-api`](https://github.com/yakul
 
 ## 打包与运行
 
-- **无沙盒、不公证**（自用构建）：主进程可直接 `Process` 启动子进程、可访问应用支持目录。
-- **Node 运行时随包分发**：`Contents/Resources/node/bin/node`（arm64）+ `Contents/Resources/qq-api/`（打包后的 sidecar 与 `node_modules`）。用户无需自备 Node。
+- **无沙盒、不公证**：主进程可直接 `Process` 启动子进程、可访问应用支持目录。**ad-hoc 签名**（`codesign --sign -`）是必须的：没有它，下载来的副本会被 Gatekeeper 判为「已损坏」，且没有覆盖入口；有它才会降级成可覆盖的提示。
+- **发布由 tag 触发**：`v*` tag → GitHub Actions（`macos-14`，本身就是 arm64）构建、校验、`ditto` 打包、发 Release。**public 仓库的标准 macOS runner 免费且不限分钟**，这是这条路成立的前提。
+- **分发靠 Homebrew Cask，不靠用户自己解压**：App 未公证，浏览器下载会带 `com.apple.quarantine`，而 macOS 15 起「右键 → 打开」的后门已被移除，用户只能去系统设置里点「仍要打开」。Cask 的 `postflight` 执行 `xattr -dr com.apple.quarantine`，这是 GoReleaser 对未公证二进制的推荐做法，让 `brew install --cask` 成为唯一零摩擦的安装路径。zip 直下保留，文档写明步骤。
+- **打包用 `ditto` 而不是 `zip`**：`zip` 会破坏代码签名，解压出来就是「已损坏」；`ditto -c -k --keepParent` 保住签名。
+- **CI 也跑一遍组装**：发布脚本只在打 tag 时才被用到，所以 `ci.yml` 每次 push 都组装一次 bundle 并校验签名/文件完整性，免得发版当天才发现脚本已经坏了。
+- **Node 运行时随包分发**：`Contents/Resources/sidecar/node/bin/node`（arm64）+ 同目录的 `wrapper.js` 与 `node_modules`。用户无需自备 Node。CI 里用 `setup-node` 装**固定版本**再整份拷进去——这个 Node 是用户实际执行的运行时，不能跟着 runner 镜像漂。sidecar 依赖实测 **0 个原生模块**，所以 CI 里 `npm ci` 不存在架构错配风险。
 - **应用图标随包分发**：`Contents/Resources/AppIcon.icns`，`Info.plist` 的 `CFBundleIconFile` 指向它。图标源是 `Assets/icon/AppIcon.svg`，由 `Scripts/make-icon.py` 生成：深林绿底板 + 骨白的重降号 𝄫，**满幅绘制不自己画圆角**（macOS 26 给应用图标自己套遮罩与高光，再画一层就会变成方中套方）。构建只做拷贝，重生成图标才需要 `rsvg-convert`。
 - **启动顺序**：应用启动 → 拉起 sidecar → 读到端口后探测 `/login/status` → 已登录则加载侧边栏数据，未登录则引导扫码。
 - **退出顺序**：先停播放、flush 待提交队列，再向 sidecar 发终止信号并等待退出（超时则强杀）。

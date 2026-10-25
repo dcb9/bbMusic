@@ -123,7 +123,29 @@ macOS 上的 QQ 音乐播放器：原生 SwiftUI，用 Last.fm 记录听歌。
 ./dist/bbMusic.app/Contents/MacOS/bbMusic --appearance dark --capture-screenshots docs/screenshots/dark
 ```
 
-## 构建与运行
+## 安装
+
+**推荐 Homebrew**（不弹任何安全提示）：
+
+```sh
+brew install --cask dcb9/bbmusic/bbmusic
+```
+
+**或直接下载**：到 [Releases](https://github.com/dcb9/bbMusic/releases) 取 `bbMusic-<版本>-arm64.zip`，
+解开后把 `bbMusic.app` 拖进「应用程序」。
+
+App 用 ad-hoc 签名、**未经 Apple 公证**（公证需要 $99/年的开发者账号），所以直接下载时 macOS 会拦一次——
+这是签名机制的正常行为，不是 App 有问题：
+
+1. 双击 `bbMusic.app`，弹出提示后点「完成」
+2. 打开 **系统设置 → 隐私与安全性**，在下方点「仍要打开」
+3. 再双击一次
+
+macOS 15 起「右键 → 打开」的后门已被 Apple 移除，只能走上面这条；用 Homebrew 安装则自动跳过。
+
+**系统要求**：macOS 14+，Apple Silicon（arm64）。
+
+## 从源码构建
 
 需要 macOS 14+、Xcode 命令行工具、Node 20+（仅构建时用来装依赖；运行时不依赖系统 Node）。
 
@@ -139,6 +161,27 @@ open dist/bbMusic.app
 ```
 
 `NODE_BIN=/path/to/node ./Scripts/build-app.sh` 可指定要内嵌的 Node。
+
+版本号默认 `0.1.0`，可用 `VERSION=1.2.3 BUILD_NUMBER=42 ./Scripts/build-app.sh` 覆盖——CI 就是从
+git tag 取这两个值写进 `Info.plist`。
+
+## 发布
+
+打 tag 即可，GitHub Actions 会构建、校验、打包并发布：
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` 在 `macos-14`（Apple Silicon）上跑：`npm ci` → `build-app.sh` →
+校验签名与版本 → `ditto` 打包 → 建 Release。用 `ditto` 而不是 `zip`，因为它保住代码签名，否则
+解压出来的 App 会被 Gatekeeper 判为已损坏。
+
+发布后 Cask 需要手动更新版本号与 sha256（Release 里会打印校验和）；Cask 文件在
+`homebrew-bbmusic` 仓库，`postflight` 负责清掉 quarantine，这样 `brew install` 才能双击即开。
+
+`.github/workflows/ci.yml` 在每次 push/PR 跑测试，并额外组装一次 bundle 校验它没坏——发布脚本
+只在打 tag 时才被真正用到，不该等到发版那天才发现它已经烂了。
 
 图标源在 `Assets/icon/AppIcon.svg`，由 `Scripts/make-icon.py` 生成（需要 `brew install librsvg` 提供 `rsvg-convert`）；构建只是把已提交的 `AppIcon.icns` 拷进 bundle，平时改图标才需要跑它。
 
@@ -185,10 +228,12 @@ QQ 音乐匿名只能拿到 30 秒试听，完整播放需要登录。播放条�
 ## 已知限制
 
 - **只做 macOS**，不上架 App Store，不做自动更新。
+- **只有 arm64 构建**：发布在 Apple Silicon runner 上构建，Intel Mac 需要自己从源码编译。
+- **未经 Apple 公证**：ad-hoc 签名，首次启动需按上面的步骤放行；要免掉这一步需要 $99/年的开发者账号。
 - **每日推荐不能翻页**：上游固定返回 30 首，`offset` / `limit` 被忽略。
 - **厂牌与指挥不做筛选**：QQ 音乐搜索响应没有这两个字段，用正则从描述里猜会给出不可靠的结果。
 - **下架曲目无法播放**：版权下架后上游会抹掉 `mid` 与 `album.mid`，这类歌单（例如「李志」）没有封面也播不了。
-- **ad-hoc 签名**：媒体键与部分系统集成未验证。
+- **媒体键与部分系统集成未验证**：ad-hoc 签名下未能完整测试。
 
 ## 致谢
 

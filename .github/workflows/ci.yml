@@ -1,0 +1,65 @@
+name: CI
+
+# Build and test on every push and pull request. This produces no installable artifact — releasing is
+# `release.yml`'s job, and keeping them apart means a red test never looks like a broken download.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push makes an older run's result irrelevant; cancelling saves the runner minutes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # macOS 14 or newer is required by Package.swift, and the standard macos-14+ runners are Apple
+    # Silicon — the same architecture the released app targets, so tests run on what users get.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          uname -m
+
+      - name: Build
+        run: swift build --build-tests
+
+      - name: Test
+        run: swift test
+
+  # The release script is the part most likely to rot silently: it is only exercised when someone
+  # tags. Building the bundle here (without publishing) catches a broken script on the commit that
+  # breaks it rather than on the day of a release.
+  bundle:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install sidecar dependencies
+        working-directory: sidecar
+        run: npm ci
+
+      - name: Assemble the app bundle
+        run: |
+          NODE_BIN="$(command -v node)" ./Scripts/build-app.sh
+
+      - name: Check the bundle is complete and signed
+        run: |
+          APP=dist/bbMusic.app
+          test -x "$APP/Contents/MacOS/bbMusic"
+          test -x "$APP/Contents/Resources/sidecar/node/bin/node"
+          test -f "$APP/Contents/Resources/sidecar/wrapper.js"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          # A bundle that fails this would be reported to users as "damaged".
+          codesign --verify --deep --strict "$APP"
+          echo "bundle OK: $(du -sh "$APP" | cut -f1)"

@@ -1,0 +1,112 @@
+name: Release
+
+# Tag-driven: `git tag v0.1.0 && git push origin v0.1.0` builds the app and publishes it, so a user
+# never has to install Xcode or Node to try bbMusic.
+on:
+  push:
+    tags: ['v*']
+  # A manual run builds the same artifact without creating a release, for testing the pipeline.
+  workflow_dispatch:
+
+permissions:
+  # Needed to create the release and upload assets with the default GITHUB_TOKEN.
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Standard macos-14+ runners are Apple Silicon, which is what the bundle targets; Package.swift
+    # requires macOS 14. Free and unmetered for public repositories.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # Manual runs have no tag; produce a clearly-marked development version.
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION"
+
+      # Pinned rather than inherited from the runner: this Node is copied into the bundle and becomes
+      # the runtime users actually execute, so its version must not drift with the runner image.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install sidecar dependencies
+        working-directory: sidecar
+        run: npm ci
+
+      - name: Build the app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          NODE_BIN="$(command -v node)" ./Scripts/build-app.sh
+
+      - name: Verify the bundle before publishing it
+        run: |
+          APP=dist/bbMusic.app
+          test -x "$APP/Contents/MacOS/bbMusic"
+          test -x "$APP/Contents/Resources/sidecar/node/bin/node"
+          test -f "$APP/Contents/Resources/sidecar/wrapper.js"
+          # The version users will see in the app must match the release they downloaded.
+          BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          test "$BUILT" = "${{ steps.version.outputs.version }}"
+          # Ad-hoc signature: without a valid one, Gatekeeper reports a downloaded copy as "damaged"
+          # with no way to override it. With it, the user gets the bypassable prompt instead.
+          codesign --verify --deep --strict "$APP"
+          echo "verified $BUILT"
+
+      - name: Package
+        id: package
+        run: |
+          # ditto preserves the code signature and resource forks; `zip` would strip the signature and
+          # produce a bundle Gatekeeper rejects.
+          ARCHIVE="bbMusic-${{ steps.version.outputs.version }}-arm64.zip"
+          ditto -c -k --keepParent dist/bbMusic.app "$ARCHIVE"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          shasum -a 256 "$ARCHIVE" | tee "$ARCHIVE.sha256"
+          echo "size: $(du -h "$ARCHIVE" | cut -f1)"
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            **推荐：Homebrew**（无任何安全弹窗）
+
+            ```sh
+            brew install --cask dcb9/bbmusic/bbmusic
+            ```
+
+            **或直接下载**：解开 zip，把 `bbMusic.app` 拖进「应用程序」。
+
+            这个 App 用 ad-hoc 签名、未经 Apple 公证（需要 $99/年的开发者账号）。直接下载时
+            macOS 会拦一次，这是签名机制的正常行为，不是 App 有问题：
+
+            1. 双击 `bbMusic.app`，弹出提示后点「完成」
+            2. 打开 **系统设置 → 隐私与安全性**，在下方点「仍要打开」
+            3. 再双击一次即可
+
+            macOS 15 起「右键 → 打开」的后门已被 Apple 移除，只能走上面这条路径；用 Homebrew
+            安装则会自动跳过这一步。
+
+            ## 系统要求
+
+            macOS 14 或更新版本，Apple Silicon（arm64）。
