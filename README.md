@@ -177,8 +177,13 @@ git tag v0.1.0 && git push origin v0.1.0
 校验签名与版本 → `ditto` 打包 → 建 Release。用 `ditto` 而不是 `zip`，因为它保住代码签名，否则
 解压出来的 App 会被 Gatekeeper 判为已损坏。
 
-发布后 Cask 需要手动更新版本号与 sha256（Release 里会打印校验和）；Cask 文件在
-`homebrew-bbmusic` 仓库，`postflight` 负责清掉 quarantine，这样 `brew install` 才能双击即开。
+发布后要更新 Cask，否则 `brew install` 会继续装旧版：
+
+1. 从 Release 取 sha256（工作流会打印，也作为 `.sha256` 附件发布）
+2. 改本仓库 `.github/homebrew-cask/bbmusic.rb` 的 `version` 与 `sha256`
+3. 把该文件同步到 [`dcb9/homebrew-bbmusic`](https://github.com/dcb9/homebrew-bbmusic) 的 `Casks/bbmusic.rb`
+
+Cask 的 `postflight` 负责清掉 quarantine——这是 `brew install` 能双击即开的唯一原因，改动它前请先读文件开头的说明。
 
 `.github/workflows/ci.yml` 在每次 push/PR 跑测试，并额外组装一次 bundle 校验它没坏——发布脚本
 只在打 tag 时才被真正用到，不该等到发版那天才发现它已经烂了。
