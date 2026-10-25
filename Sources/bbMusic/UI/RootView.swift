@@ -1148,13 +1148,8 @@ private struct QueuePane: View {
                                     model.showDetail(for: track)
                                 }
                             )
-                            .background(
-                                RowClickCatcher(
-                                    onClick: { model.selectedTrackID = track.id },
-                                    // Same as the row's ▶ and the menu item: jump to this entry.
-                                    onDoubleClick: { playQueueEntry(at: index) }
-                                )
-                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { playQueueEntry(at: index) }
                             .contextMenu {
                                 Button("播放") { playQueueEntry(at: index) }
                                 Button("详情") {
@@ -1234,14 +1229,13 @@ private struct TrackList: View {
                             { selectedID = track.id; show(track) }
                         }
                     )
-                    // Selection is handled by AppKit on mouse-down, and a second press plays. Neither
-                    // waits out `NSEvent.doubleClickInterval`: the click count arrives with the press.
-                    .background(
-                        RowClickCatcher(
-                            onClick: { selectedID = track.id },
-                            onDoubleClick: { play(index: index, track: track) }
-                        )
-                    )
+                    // Double-click plays the row. A SwiftUI gesture rather than the AppKit
+                    // `RowClickCatcher` that used to live here: that view was installed through
+                    // `.background`, where SwiftUI's own content layer answers hit testing first, so
+                    // presses never reached it — the row looked inert. Nothing needs the old
+                    // mouse-down selection any more, so the simpler, reliable gesture wins.
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { play(index: index, track: track) }
                     .contextMenu {
                         Button("播放") { play(index: index, track: track) }
                         Button("详情") {
